@@ -1,0 +1,16 @@
+# Runtime-generated caches
+HEMS_Dispatch/cache/*.hri
+HEMS_Dispatch/cache/hospitals_*
+HEMS_Dispatch/cache/osm/*
+!HEMS_Dispatch/cache/osm/.gitkeep
+!HEMS_Dispatch/cache/.gitkeep
+
+# Runtime output
+HEMS_Dispatch/output/*.log
+HEMS_Dispatch/output/active_mission.txt
+HEMS_Dispatch/output/base_position.dat
+!HEMS_Dispatch/output/.gitkeep
+
+# OS metadata
+.DS_Store
+Thumbs.db
