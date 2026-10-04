@@ -1,6 +1,6 @@
 # HEMS Dispatch for X-Plane 12
 
-**Version:** 1.0.13
+**Version:** 1.0.16
 
 HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations are derived from the installed **SimHeaven X-World Europe road network**, while emergency vehicles are loaded from **RescueX_Lib** and placed along the actual road geometry.
 
@@ -15,8 +15,8 @@ HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations a
 - Configurable combinations of `RTW`, `NEF`, `FIRE` and `POLICE`
 - Random crashed vehicles for traffic accidents
 - **Integrated OpenStreetMap Moving Map** with a responsive, scrollbar-free layout
-- **Live flight track** showing the actually flown route
-- **Red Direct-To navigation** to the active mission or back to a saved home base
+- **Persistent flight track** showing the actually flown route across flights/reloads until manually reset
+- **Red Direct-To navigation** with a fixed route start for active missions, the saved home base, and selected hospitals
 - **Persistent Base Position** with a one-click **Direct to base** function in the Moving Map
 - **Hospital Direct-To** with nearby OpenStreetMap hospitals sorted by distance, initially within 50 km and optionally extended to 100 km
 - Free map panning, zoom and **Follow Aircraft** mode
@@ -111,13 +111,18 @@ The compact toolbar provides:
 - Navigation icon — center the map on the helicopter and enable **Follow Aircraft**
 - Reset icon — clear the recorded flight track
 - Home icon — toggle **Direct to base** using the saved Base Position
+- Bullseye icon — **Direct to Active mission**; replace the current Direct-To and capture the helicopter's current position as a new fixed mission-route start
 - Hospital/Cross icon — open the **Hospitals** list and select a hospital Direct-To
 - **New Mission** — create a mission directly from the Moving Map
 - **End Mission** — remove the active mission
 
 Drag the map with the left mouse button to freely move the map; this automatically disables Follow Aircraft. The helicopter position is shown live and the active mission is marked as the destination.
 
-The **Direct-To line is red (`#ff0000`)**. Normally it points from the helicopter to the active mission location. Pressing the Home icon switches the Direct-To destination to the saved Base Position; pressing it again disables Direct to base and returns navigation to the active mission if one exists. Starting a new mission automatically disables Direct to base.
+The **Direct-To line is red (`#ff0000`)**. For Mission, Base and Hospital Direct-To routes, the helicopter position is captured once when the Direct-To is set and becomes the **fixed start point** of that route. The line therefore remains anchored to that position while the helicopter, Moving Map and orange flight track continue to move normally. Bearing, distance, groundspeed and ETA in the status overlay remain live values based on the helicopter's current position.
+
+Press the bullseye icon (**Direct to Active mission**) at any time during an active mission to remove the current Direct-To override, capture the helicopter's current position as a new fixed start point, and draw a new route to the active mission. This can be used after navigating to the Base/Hospital or after a significant course deviation.
+
+Pressing the Home icon switches the Direct-To destination to the saved Base Position and captures the helicopter's current position as the fixed start of that Base route. Pressing it again disables Direct to base and returns navigation to the active mission if one exists. Starting a new mission automatically disables Direct to base and creates a new fixed mission Direct-To from the helicopter position at that time.
 
 The Base Position is stored in:
 
@@ -125,7 +130,15 @@ The Base Position is stored in:
 HEMS_Dispatch/output/base_position.dat
 ```
 
-The **flight track is orange (`#ffa500`)** and records the actually flown route. By default, a new track point is considered every **0.5 seconds** and stored once the aircraft has moved at least **3 meters**. The track continues recording while the Moving Map window is closed and remains available across mission changes until manually reset.
+The **flight track is orange (`#ffa500`)** and records the actually flown route. By default, a new track point is considered every **0.5 seconds** and stored once the aircraft has moved at least **3 meters**. The track continues recording while the Moving Map window is closed and is persisted across X-Plane/FlyWithLua reloads and new flights until it is manually reset with the existing track-reset button.
+
+The persisted track is stored in:
+
+```text
+HEMS_Dispatch/output/flight_track.dat
+```
+
+A new X-Plane/FlyWithLua session starts a new visual track segment, so a new flight is not connected to the previous flight by an artificial straight line.
 
 A semi-transparent status overlay is shown directly on the map and displays the current Direct-To destination together with bearing, distance, groundspeed and ETA, for example:
 
@@ -144,20 +157,22 @@ If an uncached tile cannot be downloaded, navigation, Direct-To, bearing, distan
 
 ### Hospitals
 
-Press the Hospital/Cross icon in the Moving Map to open the hospital selection window. HEMS Dispatch queries OpenStreetMap hospital data asynchronously through the Overpass API, so the X-Plane render loop is not blocked by the network request.
+Press the Hospital/Cross icon in the Moving Map to open the hospital selection window. If no cached dataset exists yet, HEMS Dispatch queries OpenStreetMap hospital data asynchronously through the Overpass API, so the X-Plane render loop is not blocked by the network request.
 
-The initial list contains hospitals within **50 km** of the current helicopter position and is sorted by distance. Press **Load more (up to 100 km)** to start a separate 100 km query; hospitals beyond 50 km are not requested before this button is used.
+The initial dataset contains hospitals within **50 km** of the helicopter position at the time it is loaded. Once successfully loaded, the dataset is cached persistently and reused when the Hospitals window is opened again. The displayed distances and sorting are still recalculated continuously from the helicopter's **current position**, but reopening the window does not automatically trigger another Overpass request.
+
+Press **Load more (up to 100 km)** to load/use the separate 100 km dataset. A new 100 km Overpass request is only made when no cached 100 km dataset exists. Use **Reload hospital list** to explicitly refresh the currently displayed 50 km or 100 km dataset from the helicopter's current position.
 
 Selecting a hospital:
 
 - closes the hospital selection window,
 - disables an active Direct to base route,
-- activates the red Direct-To line to the selected hospital center, and
+- captures the helicopter position at selection time as the fixed Hospital Direct-To start and activates the red Direct-To line to the selected hospital center, and
 - shows the hospital name, bearing, distance, groundspeed and ETA in the Moving Map overlay.
 
 If hospital navigation is active, reopening the Hospitals window shows **Cancel direction to hospital** at the top. Cancelling removes the hospital override and returns navigation to the active mission when one exists. Starting a new mission also clears any active Base/Hospital Direct-To override.
 
-Hospital results are cached locally for a short time under `HEMS_Dispatch/cache/`.
+Hospital results are cached persistently under `HEMS_Dispatch/cache/` and are only refreshed explicitly with **Reload hospital list** (or when no matching cache exists yet).
 
 ## Mission Generation
 
@@ -199,7 +214,7 @@ Configurable options include:
 - Moving Map size, zoom and update rates
 - Flight-track interval and minimum movement
 - OSM tile URL, download settings and texture limit
-- Hospital search radii, Overpass endpoint, request timeout and short-lived hospital cache
+- Hospital search radii, Overpass endpoint, request timeout and persistent hospital cache behavior
 
 Configuration changes can be applied without restarting X-Plane using:
 
@@ -239,7 +254,7 @@ SimHeaven X-World Europe, RescueX_Lib, FlyWithLua NG+ and OpenStreetMap are sepa
 
 # HEMS Dispatch für X-Plane 12
 
-**Version:** 1.0.13
+**Version:** 1.0.16
 
 HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte werden aus dem installierten **SimHeaven X-World Europe Straßennetz** abgeleitet. Einsatzfahrzeuge werden aus **RescueX_Lib** geladen und entlang des tatsächlichen Straßenverlaufs platziert.
 
@@ -254,8 +269,8 @@ HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte
 - Konfigurierbare Kombinationen aus `RTW`, `NEF`, `FIRE` und `POLICE`
 - Zufällige Unfallfahrzeuge bei Verkehrsunfällen
 - **Integrierte OpenStreetMap Moving Map** mit responsivem, scrollbar-freiem Layout
-- **Live-Flugspur** der tatsächlich geflogenen Strecke
-- **Rote Direct-To-Navigation** zur aktiven Einsatzstelle oder zurück zur gespeicherten Heimatbasis
+- **Persistente Flugspur** der tatsächlich geflogenen Strecke über neue Flüge/Reloads hinweg bis zum manuellen Zurücksetzen
+- **Rote Direct-To-Navigation** mit festem Routenstart zur aktiven Einsatzstelle, zur gespeicherten Heimatbasis und zu ausgewählten Krankenhäusern
 - **Persistente Base Position** mit **Direct to base** über einen Haus-Button in der Moving Map
 - **Hospital Direct-To** mit Krankenhäusern aus OpenStreetMap, nach Entfernung sortiert; zunächst 50 km, optional erweiterbar auf 100 km
 - Freies Verschieben der Karte, Zoom und **Follow Aircraft**
@@ -352,13 +367,18 @@ Die kompakte Toolbar bietet:
 - Navigationssymbol — Karte auf den Hubschrauber zentrieren und **Follow Aircraft** aktivieren
 - Reset-Symbol — aufgezeichnete Flugspur zurücksetzen
 - Haus-Symbol — **Direct to base** zur gespeicherten Base Position ein-/ausschalten
+- Fadenkreuz-/Zielsymbol — **Direct to Active mission**; die aktuelle Direct-To-Route ersetzen und die aktuelle Heli-Position als neuen festen Startpunkt der Einsatzroute übernehmen
 - Krankenhaus-/Kreuz-Symbol — die **Hospitals**-Liste öffnen und ein Krankenhaus als Direct-To-Ziel auswählen
 - **New Mission** — direkt aus der Moving Map einen Einsatz erzeugen
 - **End Mission** — aktiven Einsatz entfernen
 
 Die Karte lässt sich mit gedrückter linker Maustaste frei verschieben; dadurch wird Follow Aircraft automatisch deaktiviert. Die aktuelle Hubschrauberposition wird live dargestellt und die aktive Einsatzstelle als Ziel markiert.
 
-Die **Direct-To-Linie ist rot (`#ff0000`)**. Normalerweise führt sie von der aktuellen Hubschrauberposition zur aktiven Einsatzstelle. Mit dem Haus-Symbol wird das Ziel auf die gespeicherte Base Position umgeschaltet. Ein erneuter Klick deaktiviert **Direct to base** und schaltet – sofern vorhanden – wieder auf den aktiven Einsatz zurück. Beim Start eines neuen Einsatzes wird Direct to base automatisch deaktiviert.
+Die **Direct-To-Linie ist rot (`#ff0000`)**. Für Mission-, Base- und Hospital-Direct-To wird die Hubschrauberposition beim Setzen der jeweiligen Route einmalig gespeichert und bildet anschließend den **festen Startpunkt** dieser Route. Die Linie bleibt damit an dieser Position verankert, während sich Hubschrauberposition, Moving Map und orange Flugspur weiterhin normal aktualisieren. Bearing, Distanz, Groundspeed und ETA im Status-Overlay bleiben Live-Werte auf Basis der aktuellen Hubschrauberposition.
+
+Mit dem Fadenkreuz-/Zielsymbol (**Direct to Active mission**) kann während eines aktiven Einsatzes jederzeit die aktuelle Direct-To-Route ersetzt werden. Dabei werden Base-/Hospital-Overrides deaktiviert, die aktuelle Heli-Position als neuer fester Startpunkt gespeichert und von dort eine neue Route zur aktiven Einsatzstelle gezeichnet. Das eignet sich beispielsweise nach einer größeren Kursabweichung oder nach einer zwischenzeitlichen Navigation zur Base bzw. zu einem Krankenhaus.
+
+Mit dem Haus-Symbol wird das Ziel auf die gespeicherte Base Position umgeschaltet. Dabei wird die aktuelle Heli-Position einmalig als fester Startpunkt der Base-Route gespeichert. Ein erneuter Klick deaktiviert **Direct to base** und schaltet – sofern vorhanden – wieder auf den aktiven Einsatz zurück. Beim Start eines neuen Einsatzes wird Direct to base automatisch deaktiviert und ein neues festes Mission-Direct-To von der zu diesem Zeitpunkt aktuellen Heli-Position erzeugt.
 
 Die Base Position wird lokal gespeichert unter:
 
@@ -366,7 +386,15 @@ Die Base Position wird lokal gespeichert unter:
 HEMS_Dispatch/output/base_position.dat
 ```
 
-Die **Flugspur ist orange (`#ffa500`)** und zeigt die tatsächlich geflogene Strecke. Standardmäßig wird alle **0,5 Sekunden** ein möglicher Trackpunkt geprüft und gespeichert, sobald sich der Hubschrauber mindestens **3 Meter** bewegt hat. Das Tracking läuft auch bei geschlossenem Moving-Map-Fenster weiter und bleibt über Einsatzwechsel hinweg erhalten, bis es manuell zurückgesetzt wird.
+Die **Flugspur ist orange (`#ffa500`)** und zeigt die tatsächlich geflogene Strecke. Standardmäßig wird alle **0,5 Sekunden** ein möglicher Trackpunkt geprüft und gespeichert, sobald sich der Hubschrauber mindestens **3 Meter** bewegt hat. Das Tracking läuft auch bei geschlossenem Moving-Map-Fenster weiter und wird über X-Plane-/FlyWithLua-Reloads sowie neue Flüge hinweg gespeichert, bis es über den vorhandenen Track-Reset-Button manuell zurückgesetzt wird.
+
+Die persistente Flugspur wird gespeichert unter:
+
+```text
+HEMS_Dispatch/output/flight_track.dat
+```
+
+Eine neue X-Plane-/FlyWithLua-Sitzung beginnt einen neuen sichtbaren Trackabschnitt, damit ein neuer Flug nicht durch eine künstliche gerade Linie mit dem Ende des vorherigen Flugs verbunden wird.
 
 Ein halbtransparentes Status-Overlay liegt direkt auf der Karte und zeigt das aktuelle Direct-To-Ziel sowie Bearing, Distanz, Groundspeed und ETA, beispielsweise:
 
@@ -385,20 +413,22 @@ Kann eine noch nicht gecachte Kachel nicht geladen werden, funktionieren Navigat
 
 ### Krankenhäuser
 
-Über das Krankenhaus-/Kreuz-Symbol in der Moving Map öffnet sich die Krankenhausauswahl. HEMS Dispatch fragt Krankenhausdaten aus OpenStreetMap asynchron über die Overpass API ab, sodass der X-Plane-Renderloop nicht durch die Netzwerkanfrage blockiert wird.
+Über das Krankenhaus-/Kreuz-Symbol in der Moving Map öffnet sich die Krankenhausauswahl. Ist noch kein passender Cache vorhanden, fragt HEMS Dispatch Krankenhausdaten aus OpenStreetMap asynchron über die Overpass API ab, sodass der X-Plane-Renderloop nicht durch die Netzwerkanfrage blockiert wird.
 
-Die erste Liste enthält Krankenhäuser im Umkreis von **50 km** um die aktuelle Heli-Position und ist nach Entfernung sortiert. Erst mit **Load more (up to 100 km)** wird eine separate Abfrage bis **100 km** gestartet; Krankenhäuser außerhalb von 50 km werden vorher nicht abgefragt.
+Der erste Datensatz enthält Krankenhäuser im Umkreis von **50 km** um die Heli-Position zum Zeitpunkt des Ladens. Nach einem erfolgreichen Abruf wird dieser Datensatz persistent gecacht und beim erneuten Öffnen der Hospitals-Liste wiederverwendet. Die angezeigten Entfernungen und die Sortierung werden weiterhin anhand der **aktuellen Heli-Position** neu berechnet; allein das Öffnen des Fensters startet aber keine neue Overpass-Abfrage mehr.
+
+Mit **Load more (up to 100 km)** wird der separate 100-km-Datensatz geladen bzw. aus dem Cache verwendet. Eine neue 100-km-Abfrage erfolgt nur, wenn noch kein entsprechender Cache vorhanden ist. Über **Reload hospital list** kann der aktuell angezeigte 50-km- oder 100-km-Datensatz bewusst von der aktuellen Heli-Position aus neu über Overpass geladen werden.
 
 Die Auswahl eines Krankenhauses:
 
 - schließt das Krankenhausfenster automatisch,
 - deaktiviert eine aktive Direct-to-base-Route,
-- aktiviert die rote Direct-To-Linie zur Mitte des ausgewählten Krankenhauses und
+- speichert die aktuelle Heli-Position beim Auswählen als festen Startpunkt der Hospital-Route, aktiviert die rote Direct-To-Linie zur Mitte des ausgewählten Krankenhauses und
 - zeigt Krankenhausname, Bearing, Entfernung, Groundspeed und ETA im Moving-Map-Overlay.
 
 Ist bereits eine Krankenhausnavigation aktiv, steht beim erneuten Öffnen der Hospitals-Liste **Cancel direction to hospital** ganz oben. Das Abbrechen entfernt das Krankenhaus-Ziel und wechselt zu einer aktiven Einsatzroute zurück, sofern ein Einsatz vorhanden ist. Auch ein neuer Einsatz entfernt automatisch eine aktive Base-/Hospital-Direct-To-Übersteuerung.
 
-Krankenhausergebnisse werden für kurze Zeit lokal unter `HEMS_Dispatch/cache/` zwischengespeichert.
+Krankenhausergebnisse werden persistent unter `HEMS_Dispatch/cache/` gespeichert und nur über **Reload hospital list** (oder bei fehlendem passenden Cache) erneut über Overpass geladen.
 
 ## Einsatzgenerierung
 
@@ -440,7 +470,7 @@ Konfigurierbar sind unter anderem:
 - Größe, Zoom und Update-Raten der Moving Map
 - Intervall und Mindestbewegung der Flugspur
 - OSM-Tile-URL, Download-Einstellungen und Texture-Limit
-- Krankenhaus-Suchradien, Overpass-Endpunkt, Request-Timeout und kurzzeitiger Krankenhaus-Cache
+- Krankenhaus-Suchradien, Overpass-Endpunkt, Request-Timeout und persistentes Krankenhaus-Caching
 
 Änderungen können ohne X-Plane-Neustart übernommen werden über:
 

@@ -2,6 +2,40 @@
 
 All notable changes to HEMS Dispatch are documented in this file.
 
+## 1.0.16 — 2026-10-04
+
+### Added
+- Added **Reload hospital list** to the Hospitals window for an explicit fresh Overpass/curl refresh from the current helicopter position.
+- Added persistent flight-track storage in `HEMS_Dispatch/output/flight_track.dat`.
+
+### Changed
+- Hospital datasets are now cached persistently instead of being automatically refreshed after small aircraft movements. Reopening the Hospitals window reuses the cached data and recalculates distance/sorting from the helicopter's current position without starting another Overpass request.
+- **Load more (up to 100 km)** reuses a cached 100 km dataset when available and only requests it from Overpass when no matching cache exists.
+- A fresh 50 km reload invalidates an older 100 km cache so a later **Load more** cannot silently reuse data from an obsolete query origin.
+- The flight track is restored after X-Plane/FlyWithLua reloads and new flights and remains stored until the existing track-reset button is used.
+- New sessions start a separate visual track segment so the previous flight is not connected to the new flight by an artificial straight line.
+- Version and OpenStreetMap/Overpass user agents updated to 1.0.16.
+
+## 1.0.15 — 2026-10-04
+
+### Changed
+- **Direct to base** now captures the helicopter position once when the route is activated and uses it as a fixed route start; the red line no longer follows the helicopter.
+- **Hospital Direct-To** now captures the helicopter position once when a hospital is selected and uses it as a fixed route start; the red line no longer follows the helicopter.
+- Mission, Base and Hospital Direct-To routes now use the same fixed-start geometry while aircraft position, flight track, bearing, distance, groundspeed and ETA continue to update live.
+- Version and OpenStreetMap/Overpass user agents updated to 1.0.15.
+
+## 1.0.14 — 2026-10-04
+
+### Added
+- Added a **Direct to Active mission** bullseye button directly to the right of **Direct to base** in the Moving Map toolbar.
+- Pressing **Direct to Active mission** validates that a mission is active, clears any Base/Hospital Direct-To override, captures the helicopter's current position as a new fixed route start, and creates a new Direct-To line to the active mission.
+
+### Changed
+- Mission Direct-To lines no longer move their start point with the helicopter. The helicopter position at the moment the mission Direct-To is set is stored as a fixed route start and the red line remains anchored there.
+- A newly generated mission automatically captures its initial fixed Direct-To start position.
+- Live aircraft position, flight-track recording, map following, bearing, distance, groundspeed and ETA continue to update normally.
+- **Direct to base** and Hospital Direct-To behavior remain unchanged.
+
 ## 1.0.13 — 2026-10-04
 
 ### Fixed

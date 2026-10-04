@@ -7,7 +7,10 @@ M.map_center_lat = nil
 M.map_center_lon = nil
 M.base_position = nil
 M.direct_to_base = false
+M.base_route_start = nil
 M.hospital_target = nil
+M.hospital_route_start = nil
+M.mission_route_start = nil
 M.nav = {
     valid = false,
     lat = nil,
@@ -26,6 +29,9 @@ M.track_points = {}
 M.track_revision = 0
 M.last_track_sample = -1000
 M.track_render_cache = nil
+M.track_file = nil
+M.track_segment_pending = false
+M.track_persistence_warned = false
 M.last_nav_update = -1000
 M.last_info_update = -1000
 M.last_tile_prepare = -1000
@@ -99,6 +105,18 @@ local function update_nav(force)
 
     local mission = HEMS.active_mission
     local target_lat, target_lon, target_kind
+    if mission and not M.mission_route_start then
+        -- Keep mission Direct-To geometry fixed from the moment it first becomes
+        -- active. This fallback covers unusual state transitions where a mission
+        -- exists without having been initialized through set_direct_to_active_mission().
+        M.mission_route_start = { lat = lat, lon = lon }
+        HEMS.log(string.format(
+            "Moving Map: Mission Direct-To start initialized at %.6f/%.6f.",
+            lat,
+            lon
+        ))
+    end
+
     if M.hospital_target then
         target_lat = M.hospital_target.lat
         target_lon = M.hospital_target.lon
@@ -161,6 +179,7 @@ function M.load_base_position()
     if not f then
         M.base_position = nil
         M.direct_to_base = false
+        M.base_route_start = nil
         return true
     end
 
@@ -177,11 +196,13 @@ function M.load_base_position()
     if not lat or not lon or lat < -90 or lat > 90 or lon < -180 or lon > 180 then
         M.base_position = nil
         M.direct_to_base = false
+        M.base_route_start = nil
         return false, "base_position.dat contains invalid coordinates"
     end
 
     M.base_position = { lat = lat, lon = lon, saved_at = values.saved_at }
     M.direct_to_base = false
+    M.base_route_start = nil
     HEMS.log(string.format("Base position loaded: %.6f/%.6f", lat, lon))
     return true
 end
@@ -210,8 +231,9 @@ function M.set_base_position()
 end
 
 function M.clear_direct_to_base()
-    if not M.direct_to_base then return false end
+    if not M.direct_to_base and not M.base_route_start then return false end
     M.direct_to_base = false
+    M.base_route_start = nil
     update_nav(true)
     update_info(true)
     return true
@@ -229,7 +251,14 @@ function M.set_hospital_target(hospital)
         return false, "invalid hospital coordinates"
     end
 
+    local start_lat = tonumber(LATITUDE)
+    local start_lon = tonumber(LONGITUDE)
+    if not start_lat or not start_lon or start_lat < -90 or start_lat > 90 or start_lon < -180 or start_lon > 180 then
+        return false, "current helicopter position is unavailable"
+    end
+
     M.direct_to_base = false
+    M.base_route_start = nil
     M.hospital_target = {
         lat = lat,
         lon = lon,
@@ -237,9 +266,12 @@ function M.set_hospital_target(hospital)
         osm_id = hospital.osm_id,
         osm_type = hospital.osm_type,
     }
+    M.hospital_route_start = { lat = start_lat, lon = start_lon }
     HEMS.status_message = "Direct to hospital enabled: " .. M.hospital_target.name
     HEMS.log(string.format(
-        "Moving Map: Direct to hospital enabled: %s (%.6f/%.6f).",
+        "Moving Map: Direct to hospital enabled from %.6f/%.6f to %s (%.6f/%.6f).",
+        start_lat,
+        start_lon,
         M.hospital_target.name,
         lat,
         lon
@@ -250,9 +282,10 @@ function M.set_hospital_target(hospital)
 end
 
 function M.clear_hospital_target()
-    if not M.hospital_target then return false end
-    local name = M.hospital_target.name
+    if not M.hospital_target and not M.hospital_route_start then return false end
+    local name = M.hospital_target and M.hospital_target.name or nil
     M.hospital_target = nil
+    M.hospital_route_start = nil
     HEMS.status_message = "Direct to hospital disabled."
     HEMS.log("Moving Map: Direct to hospital disabled" .. (name and (": " .. tostring(name)) or "") .. ".")
     update_nav(true)
@@ -260,10 +293,67 @@ function M.clear_hospital_target()
     return true
 end
 
-function M.clear_navigation_override()
-    local changed = M.direct_to_base or M.hospital_target ~= nil
+function M.clear_mission_route()
+    if not M.mission_route_start then return false end
+    M.mission_route_start = nil
+    update_nav(true)
+    update_info(true)
+    return true
+end
+
+function M.set_direct_to_active_mission(options)
+    options = type(options) == "table" and options or {}
+
+    local mission = HEMS.active_mission
+    if not mission then
+        if options.announce ~= false then
+            HEMS.status_message = "No active mission available for Direct-To."
+        end
+        HEMS.log("Moving Map: Direct to Active mission requested, but no mission is active.")
+        return false, "no active mission"
+    end
+
+    local lat = tonumber(LATITUDE)
+    local lon = tonumber(LONGITUDE)
+    if not lat or not lon or lat < -90 or lat > 90 or lon < -180 or lon > 180 then
+        if options.announce ~= false then
+            HEMS.status_message = "Current helicopter position is unavailable."
+        end
+        HEMS.log("Moving Map: Direct to Active mission requested, but the helicopter position is unavailable.")
+        return false, "current helicopter position is unavailable"
+    end
+
+    -- Selecting the mission is an explicit Direct-To action: remove any Base or
+    -- Hospital override and replace the previous mission route start with the
+    -- helicopter's current position.
     M.direct_to_base = false
+    M.base_route_start = nil
     M.hospital_target = nil
+    M.hospital_route_start = nil
+    M.mission_route_start = { lat = lat, lon = lon }
+
+    if options.announce ~= false then
+        HEMS.status_message = "Direct to active mission set."
+    end
+    HEMS.log(string.format(
+        "Moving Map: Direct to Active mission set from %.6f/%.6f to %.6f/%.6f.",
+        lat,
+        lon,
+        tonumber(mission.lat) or 0,
+        tonumber(mission.lon) or 0
+    ))
+
+    update_nav(true)
+    update_info(true)
+    return true
+end
+
+function M.clear_navigation_override()
+    local changed = M.direct_to_base or M.base_route_start ~= nil or M.hospital_target ~= nil or M.hospital_route_start ~= nil
+    M.direct_to_base = false
+    M.base_route_start = nil
+    M.hospital_target = nil
+    M.hospital_route_start = nil
     if changed then
         update_nav(true)
         update_info(true)
@@ -274,6 +364,7 @@ end
 function M.toggle_direct_to_base()
     if M.direct_to_base then
         M.direct_to_base = false
+        M.base_route_start = nil
         HEMS.status_message = "Direct to base disabled."
         HEMS.log("Moving Map: Direct to base disabled.")
         update_nav(true)
@@ -287,12 +378,116 @@ function M.toggle_direct_to_base()
         return false, "base position not set"
     end
 
+    local lat = tonumber(LATITUDE)
+    local lon = tonumber(LONGITUDE)
+    if not lat or not lon or lat < -90 or lat > 90 or lon < -180 or lon > 180 then
+        HEMS.status_message = "Current helicopter position is unavailable."
+        HEMS.log("Moving Map: Direct to base requested, but the helicopter position is unavailable.")
+        return false, "current helicopter position is unavailable"
+    end
+
     M.hospital_target = nil
+    M.hospital_route_start = nil
     M.direct_to_base = true
+    M.base_route_start = { lat = lat, lon = lon }
     HEMS.status_message = "Direct to base enabled."
-    HEMS.log("Moving Map: Direct to base enabled.")
+    HEMS.log(string.format(
+        "Moving Map: Direct to base enabled from %.6f/%.6f to %.6f/%.6f.",
+        lat,
+        lon,
+        tonumber(M.base_position.lat) or 0,
+        tonumber(M.base_position.lon) or 0
+    ))
     update_nav(true)
     update_info(true)
+    return true
+end
+
+
+local function close_track_file()
+    if M.track_file then
+        pcall(function() M.track_file:flush() end)
+        pcall(function() M.track_file:close() end)
+        M.track_file = nil
+    end
+end
+
+local function append_track_point(point)
+    if not HEMS.paths or not HEMS.paths.flight_track then return true end
+
+    if not M.track_file then
+        local f, err = io.open(HEMS.paths.flight_track, "ab")
+        if not f then
+            if not M.track_persistence_warned then
+                M.track_persistence_warned = true
+                HEMS.log("Moving Map: Flight track could not be persisted: " .. tostring(err))
+            end
+            return false
+        end
+        pcall(function() f:setvbuf("line") end)
+        M.track_file = f
+    end
+
+    local break_flag = point.break_before and 1 or 0
+    local ok, err = pcall(function()
+        M.track_file:write(string.format("%.8f\t%.8f\t%d\n", point.lat, point.lon, break_flag))
+        M.track_file:flush()
+    end)
+    if not ok then
+        if not M.track_persistence_warned then
+            M.track_persistence_warned = true
+            HEMS.log("Moving Map: Flight track could not be persisted: " .. tostring(err))
+        end
+        close_track_file()
+        return false
+    end
+    return true
+end
+
+function M.load_track()
+    close_track_file()
+    M.track_points = {}
+    M.track_revision = M.track_revision + 1
+    M.track_render_cache = nil
+    M.last_track_sample = -1000
+    M.track_segment_pending = false
+    M.track_persistence_warned = false
+
+    if not HEMS.paths or not HEMS.paths.flight_track then return true end
+    local f = io.open(HEMS.paths.flight_track, "rb")
+    if not f then return true end
+
+    local loaded = 0
+    local invalid = 0
+    for line in f:lines() do
+        line = line:gsub("\r$", "")
+        if line ~= "" then
+            local lat_text, lon_text, break_text = line:match("^([^\t]+)\t([^\t]+)\t([01])$")
+            local lat = tonumber(lat_text)
+            local lon = tonumber(lon_text)
+            if lat and lon and lat >= -90 and lat <= 90 and lon >= -180 and lon <= 180 then
+                M.track_points[#M.track_points + 1] = {
+                    lat = lat,
+                    lon = lon,
+                    break_before = break_text == "1",
+                }
+                loaded = loaded + 1
+            else
+                invalid = invalid + 1
+            end
+        end
+    end
+    f:close()
+
+    -- A script/X-Plane reload starts a new visual track segment so a new flight
+    -- is never connected to the previous flight by an artificial straight line.
+    M.track_segment_pending = loaded > 0
+    if loaded > 0 then
+        HEMS.log(string.format("Moving Map: Loaded %d persisted flight-track points.", loaded))
+    end
+    if invalid > 0 then
+        HEMS.log(string.format("Moving Map: Ignored %d invalid persisted flight-track line(s).", invalid))
+    end
     return true
 end
 
@@ -310,16 +505,32 @@ local function sample_track(force)
     if not lat or not lon then return end
 
     local last = M.track_points[#M.track_points]
+    local break_before = M.track_segment_pending and #M.track_points > 0 or false
     if last then
         local min_distance_m = tonumber(cfg().track_min_distance_m) or 3.0
         if min_distance_m < 0 then min_distance_m = 0 end
         local distance_m = HEMS.geo.distance_km(last.lat, last.lon, lat, lon) * 1000.0
         if distance_m < min_distance_m then return end
+
+        -- A multi-kilometre position jump between two samples indicates a new
+        -- flight/teleport rather than real helicopter movement. Keep the stored
+        -- history, but start a separate visual segment instead of drawing a long
+        -- artificial connector across the map.
+        if distance_m > 2000.0 then
+            break_before = #M.track_points > 0
+        end
     end
 
-    M.track_points[#M.track_points + 1] = { lat = lat, lon = lon }
+    local point = {
+        lat = lat,
+        lon = lon,
+        break_before = break_before,
+    }
+    M.track_segment_pending = false
+    M.track_points[#M.track_points + 1] = point
     M.track_revision = M.track_revision + 1
     M.track_render_cache = nil
+    append_track_point(point)
 end
 
 function M.background_update()
@@ -327,11 +538,18 @@ function M.background_update()
 end
 
 function M.reset_track()
+    close_track_file()
+    if HEMS.paths and HEMS.paths.flight_track then
+        os.remove(HEMS.paths.flight_track)
+    end
     M.track_points = {}
     M.track_revision = M.track_revision + 1
     M.last_track_sample = -1000
     M.track_render_cache = nil
+    M.track_segment_pending = false
+    M.track_persistence_warned = false
     sample_track(true)
+    HEMS.log("Moving Map: Persisted flight track reset.")
 end
 
 local function format_eta(seconds)
@@ -556,6 +774,14 @@ local function draw_icon_button(id, icon, tooltip_text, active_state)
         imgui.DrawList_AddTriangleFilled(cx, cy - 8, cx - 9, cy, cx + 9, cy, color)
         imgui.DrawList_AddRectFilled(cx - 7, cy - 1, cx + 7, cy + 8, color, 1)
         imgui.DrawList_AddRectFilled(cx - 2, cy + 3, cx + 2, cy + 8, base, 0)
+    elseif icon == "mission_target" then
+        -- Bullseye/crosshair: explicit Direct-To to the active mission.
+        imgui.DrawList_AddCircle(cx, cy, 7, color, 20, 1.8)
+        imgui.DrawList_AddCircle(cx, cy, 2.5, color, 16, 1.6)
+        imgui.DrawList_AddLine(cx - 10, cy, cx - 6, cy, color, 1.5)
+        imgui.DrawList_AddLine(cx + 6, cy, cx + 10, cy, color, 1.5)
+        imgui.DrawList_AddLine(cx, cy - 10, cx, cy - 6, color, 1.5)
+        imgui.DrawList_AddLine(cx, cy + 6, cx, cy + 10, color, 1.5)
     elseif icon == "hospital" then
         imgui.DrawList_AddRect(cx - 9, cy - 9, cx + 9, cy + 9, color, 2)
         imgui.DrawList_AddRectFilled(cx - 2, cy - 7, cx + 2, cy + 7, color, 1)
@@ -637,7 +863,7 @@ end
 local function draw_toolbar()
     local available_w = select(1, content_region_avail())
     local x, y = imgui.GetCursorScreenPos()
-    local two_rows = available_w < 480
+    local two_rows = available_w < 535
     local toolbar_h = two_rows and 68 or 38
     -- FlyWithLua's child canvas keeps a small internal right-side inset even
     -- when its scrollbars are visually hidden. Match that visible canvas width
@@ -683,6 +909,17 @@ local function draw_toolbar()
     end
     if draw_icon_button("direct_base", "home", base_tooltip, M.direct_to_base) then
         M.toggle_direct_to_base()
+    end
+    imgui.SameLine()
+    local mission_direct_active = HEMS.active_mission ~= nil
+        and not M.direct_to_base
+        and M.hospital_target == nil
+        and M.mission_route_start ~= nil
+    local mission_tooltip = HEMS.active_mission
+        and "Direct to Active mission"
+        or "Direct to Active mission - no active mission"
+    if draw_icon_button("direct_mission", "mission_target", mission_tooltip, mission_direct_active) then
+        M.set_direct_to_active_mission()
     end
     imgui.SameLine()
     local hospital_active = M.hospital_target ~= nil
@@ -778,7 +1015,7 @@ local function build_track_render_cache(center_world_x, center_world_y, canvas_x
             center_world_x, center_world_y, M.zoom,
             canvas_x, canvas_y, width, height
         )
-        if previous_x then
+        if previous_x and not point.break_before then
             local x0, y0, x1, y1 = clip_line_to_rect(
                 previous_x, previous_y, x, y,
                 left, top, right, bottom
@@ -869,8 +1106,29 @@ local function draw_map_canvas(width, height)
             canvas_x, canvas_y, width, height
         )
 
+        -- Every Direct-To route uses the helicopter position captured at the
+        -- moment that route was set. The aircraft symbol and live navigation
+        -- values continue to update independently from this fixed geometry.
+        local route_start = nil
+        if M.nav.target_kind == "mission" then
+            route_start = M.mission_route_start
+        elseif M.nav.target_kind == "base" then
+            route_start = M.base_route_start
+        elseif M.nav.target_kind == "hospital" then
+            route_start = M.hospital_route_start
+        end
+
+        local route_start_x, route_start_y = aircraft_x, aircraft_y
+        if route_start then
+            route_start_x, route_start_y = map_point(
+                route_start.lat, route_start.lon,
+                center_world_x, center_world_y, M.zoom,
+                canvas_x, canvas_y, width, height
+            )
+        end
+
         local line_x0, line_y0, line_x1, line_y1 = clip_line_to_rect(
-            aircraft_x, aircraft_y, target_x, target_y,
+            route_start_x, route_start_y, target_x, target_y,
             canvas_x + 5, canvas_y + 5, right - 5, bottom - 5
         )
         if line_x0 then
@@ -993,6 +1251,7 @@ function M.toggle()
 end
 
 function M.shutdown()
+    close_track_file()
     M.hide()
 end
 

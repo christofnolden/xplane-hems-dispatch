@@ -12,12 +12,14 @@ M.last_sort_lon = nil
 M.last_sort_time = -1000
 M.request = nil
 M.pending_radius_km = nil
+M.pending_force_reload = false
 M.close_requested = false
 M.show_requested = false
 M.status = "idle"
 M.error_message = nil
 M.request_counter = 0
 M.last_requested_radius_km = nil
+M.last_requested_force_reload = false
 M.gettime = os.clock
 
 local ok_socket, socket_mod = pcall(require, "socket")
@@ -217,23 +219,11 @@ local function read_cache_meta(radius_km)
     }
 end
 
-local function cache_is_usable(radius_km, lat, lon)
-    local meta = read_cache_meta(radius_km)
-    if not meta then return false end
-
-    local ttl = tonumber(cfg().cache_ttl_seconds) or 900
-    if ttl < 0 then ttl = 0 end
-    if os.time() - meta.saved_at > ttl then return false end
-
-    local reuse_distance = tonumber(cfg().cache_reuse_distance_km) or 0.05
-    if reuse_distance < 0 then reuse_distance = 0 end
-    local moved = HEMS.geo.distance_km(lat, lon, meta.lat, meta.lon)
-    if moved > reuse_distance then return false end
-
+local function cache_exists(radius_km)
     local file = io.open(path_for(radius_km, ".tsv"), "rb")
     if not file then return false end
     file:close()
-    return true, meta
+    return true
 end
 
 local function rebuild_display_items(force)
@@ -284,9 +274,8 @@ local function activate_items(items, radius_km, reference_lat, reference_lon)
     rebuild_display_items(true)
 end
 
-local function load_cached(radius_km, lat, lon)
-    local usable, meta = cache_is_usable(radius_km, lat, lon)
-    if not usable then return false end
+local function load_cached(radius_km)
+    if not cache_exists(radius_km) then return false end
 
     local items, err = parse_hospital_file(path_for(radius_km, ".tsv"))
     if not items then
@@ -294,9 +283,36 @@ local function load_cached(radius_km, lat, lon)
         return false
     end
 
-    activate_items(items, radius_km, meta.lat, meta.lon)
+    local meta = read_cache_meta(radius_km)
+    activate_items(items, radius_km, meta and meta.lat or nil, meta and meta.lon or nil)
     HEMS.log(string.format("Hospitals: loaded %d cached entries for %.0f km.", #items, radius_km))
     return true
+end
+
+local function load_initial_cached()
+    local candidates = {}
+    for _, radius in ipairs({ initial_radius_km(), extended_radius_km() }) do
+        if cache_exists(radius) then
+            local meta = read_cache_meta(radius)
+            candidates[#candidates + 1] = {
+                radius = radius,
+                saved_at = meta and meta.saved_at or 0,
+            }
+        end
+    end
+
+    table.sort(candidates, function(a, b)
+        return (a.saved_at or 0) > (b.saved_at or 0)
+    end)
+
+    for _, candidate in ipairs(candidates) do
+        if load_cached(candidate.radius) then
+            M.display_radius_km = initial_radius_km()
+            rebuild_display_items(true)
+            return true
+        end
+    end
+    return false
 end
 
 local function build_query(radius_km, lat, lon)
@@ -401,8 +417,9 @@ local function start_posix_request(args, status_path)
     return nil, "curl could not be started."
 end
 
-local function start_request(radius_km)
+local function start_request(radius_km, force_reload)
     M.last_requested_radius_km = radius_km
+    M.last_requested_force_reload = force_reload == true
     local lat, lon = current_position()
     if not lat or not lon then
         M.status = "error"
@@ -410,7 +427,7 @@ local function start_request(radius_km)
         return false
     end
 
-    if load_cached(radius_km, lat, lon) then
+    if not force_reload and load_cached(radius_km) then
         return true
     end
 
@@ -423,7 +440,7 @@ local function start_request(radius_km)
 
     local query = build_query(radius_km, lat, lon)
     local overpass_url = tostring(cfg().overpass_url or "https://overpass-api.de/api/interpreter")
-    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.13 (X-Plane 12; FlyWithLua NG+)")
+    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.16 (X-Plane 12; FlyWithLua NG+)")
     local curl = tostring(cfg().curl_executable or ((SYSTEM == "IBM") and "curl.exe" or "curl"))
     local connect_timeout = tonumber(cfg().connect_timeout_seconds) or 5
     local request_timeout = tonumber(cfg().request_timeout_seconds) or 35
@@ -457,6 +474,7 @@ local function start_request(radius_km)
 
     M.request = {
         radius_km = radius_km,
+        force_reload = force_reload == true,
         reference_lat = lat,
         reference_lon = lon,
         part_path = part_path,
@@ -499,6 +517,13 @@ local function finish_request(success, exit_code, error_text)
                 HEMS.log("Hospitals: cache file could not be finalized: " .. tostring(rename_err))
             else
                 write_cache_meta(request.radius_km, request.reference_lat, request.reference_lon)
+                if request.radius_km < extended_radius_km() then
+                    -- A fresh 50 km dataset may have been loaded from a completely
+                    -- different area. Do not let an older 100 km cache from another
+                    -- query origin silently reappear on the next Load more.
+                    os.remove(path_for(extended_radius_km(), ".tsv"))
+                    os.remove(path_for(extended_radius_km(), ".meta"))
+                end
             end
 
             activate_items(items, request.radius_km, request.reference_lat, request.reference_lon)
@@ -559,14 +584,25 @@ local function poll_request()
     end
 end
 
-function M.request_radius(radius_km)
+function M.request_radius(radius_km, force_reload)
     radius_km = tonumber(radius_km)
     if not radius_km then return false, "invalid radius" end
-    if M.request then return false, "hospital request already in progress" end
+    if M.request or M.pending_radius_km then return false, "hospital request already in progress" end
     M.pending_radius_km = radius_km
+    M.pending_force_reload = force_reload == true
     M.status = "queued"
     M.error_message = nil
     return true
+end
+
+function M.reload()
+    local radius = tonumber(M.display_radius_km) or initial_radius_km()
+    if radius >= extended_radius_km() and M.loaded_radius_km >= extended_radius_km() then
+        radius = extended_radius_km()
+    else
+        radius = initial_radius_km()
+    end
+    return M.request_radius(radius, true)
 end
 
 function M.load_more()
@@ -617,8 +653,10 @@ function M.preflight_update()
 
     if not M.request and M.pending_radius_km then
         local radius = M.pending_radius_km
+        local force_reload = M.pending_force_reload == true
         M.pending_radius_km = nil
-        start_request(radius)
+        M.pending_force_reload = false
+        start_request(radius, force_reload)
     end
 end
 
@@ -664,7 +702,7 @@ function M.build_window(wnd, x, y)
         imgui.TextUnformatted(M.error_message)
         local retry_radius = tonumber(M.last_requested_radius_km) or initial_radius_km()
         if imgui.Button("Retry", 90, 28) then
-            M.request_radius(retry_radius)
+            M.request_radius(retry_radius, M.last_requested_force_reload)
         end
         imgui.Separator()
     end
@@ -702,6 +740,15 @@ function M.build_window(wnd, x, y)
     end
 
     imgui.Separator()
+    local reload_width = math.max(120, content_width() - 4)
+    local reload_busy = M.request ~= nil or M.pending_radius_km ~= nil
+    if reload_busy then
+        imgui.TextUnformatted("Reload unavailable while hospital data is loading.")
+    elseif imgui.Button("Reload hospital list", reload_width, 30) then
+        M.reload()
+    end
+
+    imgui.Separator()
     imgui.TextUnformatted("© OpenStreetMap contributors")
 end
 
@@ -732,23 +779,21 @@ function M.show_now()
     M.close_requested = false
     M.error_message = nil
 
-    -- Reuse in-memory results only when they still originate very close to the
-    -- current aircraft position. Otherwise a fresh 50 km request is queued.
-    local reuse = false
-    if M.loaded_radius_km >= initial_radius_km() and M.reference_lat and M.reference_lon then
-        local max_reuse = tonumber(cfg().cache_reuse_distance_km) or 0.05
-        reuse = HEMS.geo.distance_km(lat, lon, M.reference_lat, M.reference_lon) <= max_reuse
-    end
-    if reuse then
+    -- Hospital datasets are intentionally persistent. Reopening the window never
+    -- starts a new Overpass request merely because the helicopter has moved.
+    -- Distances and sorting are always recalculated from the current position.
+    if M.loaded_radius_km >= initial_radius_km() and #M.items > 0 then
         M.status = "ready"
         rebuild_display_items(true)
+    elseif load_initial_cached() then
+        -- load_initial_cached() already switches the visible list back to 50 km.
     else
         M.items = {}
         M.display_items = {}
         M.loaded_radius_km = 0
         M.reference_lat = nil
         M.reference_lon = nil
-        M.request_radius(initial_radius_km())
+        M.request_radius(initial_radius_km(), false)
     end
 
     M.window = float_wnd_create(540, 520, 1, true)
@@ -766,6 +811,7 @@ end
 
 function M.shutdown()
     M.pending_radius_km = nil
+    M.pending_force_reload = false
     M.close_requested = false
     M.show_requested = false
     if M.request then

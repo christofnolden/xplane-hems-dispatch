@@ -1,4 +1,4 @@
--- HEMS Dispatch v1.0.13 configuration
+-- HEMS Dispatch v1.0.16 configuration
 -- This file can be reloaded from Plugins > HEMS Dispatch > Reload configuration.
 
 return {
@@ -123,7 +123,7 @@ return {
 
         -- OpenStreetMap standard tile server. Keep attribution visible in the map.
         tile_url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        user_agent = "HEMS-Dispatch/1.0.13 (X-Plane 12; FlyWithLua NG+)",
+        user_agent = "HEMS-Dispatch/1.0.16 (X-Plane 12; FlyWithLua NG+)",
 
         -- curl is included with current Windows versions and commonly available on
         -- macOS/Linux. Downloads run asynchronously so X-Plane is not blocked.
@@ -139,23 +139,23 @@ return {
     },
 
     hospitals = {
-        -- The Hospitals window initially queries only the local 50 km area.
-        -- The 100 km query is started only after pressing Load more.
+        -- The Hospitals window initially displays the 50 km dataset.
+        -- The 100 km dataset is used only after pressing Load more.
         initial_radius_km = 50,
         extended_radius_km = 100,
 
         -- Public OpenStreetMap Overpass API endpoint used for hospital POIs.
         overpass_url = "https://overpass-api.de/api/interpreter",
-        user_agent = "HEMS-Dispatch/1.0.13 (X-Plane 12; FlyWithLua NG+)",
+        user_agent = "HEMS-Dispatch/1.0.16 (X-Plane 12; FlyWithLua NG+)",
 
         curl_executable = (SYSTEM == "IBM") and "curl.exe" or "curl",
         connect_timeout_seconds = 5,
         request_timeout_seconds = 35,
 
-        -- Successful results are cached locally for a short time. The cache is
-        -- reused only if the helicopter is still very close to the query origin.
-        cache_ttl_seconds = 900,
-        cache_reuse_distance_km = 0.05,
+        -- Successful hospital datasets are cached persistently. Reopening the
+        -- Hospitals window only recalculates distances/sorting from the current
+        -- helicopter position. A new Overpass request is made only with the
+        -- explicit Reload hospital list action (or when no cache exists yet).
     },
 
     output = {

@@ -1,11 +1,11 @@
 -- HEMS Dispatch for X-Plane 12 / FlyWithLua NG+
--- Version 1.0.13
+-- Version 1.0.16
 --
 -- Install this file and the HEMS_Dispatch directory directly into:
 --   X-Plane 12/Resources/plugins/FlyWithLua/Scripts/
 
 HEMS = HEMS or {}
-HEMS.VERSION = "1.0.13"
+HEMS.VERSION = "1.0.16"
 HEMS.NAME = "HEMS Dispatch"
 HEMS.active_mission = nil
 HEMS.status_message = "Initializing HEMS Dispatch ..."
@@ -24,6 +24,7 @@ HEMS.paths.config = HEMS.paths.root .. "config.lua"
 HEMS.paths.log = HEMS.paths.output .. "hems_dispatch.log"
 HEMS.paths.active_mission = HEMS.paths.output .. "active_mission.txt"
 HEMS.paths.base_position = HEMS.paths.output .. "base_position.dat"
+HEMS.paths.flight_track = HEMS.paths.output .. "flight_track.dat"
 
 local function raw_log(message)
     local line = string.format("[%s] %s", os.date("%Y-%m-%d %H:%M:%S"), tostring(message))
@@ -244,6 +245,11 @@ local function bootstrap()
     local base_ok, base_err = HEMS.movingmap.load_base_position()
     if not base_ok and base_err then
         HEMS.log("WARNING: Stored base position could not be loaded: " .. tostring(base_err))
+    end
+
+    local track_ok, track_err = HEMS.movingmap.load_track()
+    if not track_ok and track_err then
+        HEMS.log("WARNING: Stored flight track could not be loaded: " .. tostring(track_err))
     end
 
     HEMS.mission.write_idle_output()

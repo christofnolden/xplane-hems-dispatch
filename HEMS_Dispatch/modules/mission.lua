@@ -399,6 +399,16 @@ function M.new_mission(options)
                         HEMS.status_message = "Mission active."
                         M.write_active_output(mission)
 
+                        -- Capture the mission Direct-To start exactly once when
+                        -- the mission becomes active. The drawn route then stays
+                        -- fixed until the user explicitly resets it.
+                        if HEMS.movingmap and HEMS.movingmap.set_direct_to_active_mission then
+                            local route_ok, route_err = HEMS.movingmap.set_direct_to_active_mission({ announce = false })
+                            if not route_ok then
+                                HEMS.log("WARNING: Mission Direct-To could not be initialized: " .. tostring(route_err))
+                            end
+                        end
+
                         HEMS.log(string.format(
                             "Mission generated: %s | %s | %.1f km | BRG %03d | %s",
                             mission.name,
@@ -437,6 +447,9 @@ end
 function M.end_mission(silent)
     HEMS.rescuex.destroy_scene()
     HEMS.active_mission = nil
+    if HEMS.movingmap and HEMS.movingmap.clear_mission_route then
+        HEMS.movingmap.clear_mission_route()
+    end
     HEMS.status_message = "Active mission ended and all temporary objects removed."
     M.write_idle_output()
     HEMS.log("Active mission ended.")
