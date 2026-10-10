@@ -2,6 +2,17 @@
 
 All notable changes to HEMS Dispatch are documented in this file.
 
+## 1.0.17 — 2026-10-10
+
+### Added
+- Added a thin **grey dashed heading prediction** to the Moving Map. It starts at the helicopter's live position and projects the current aircraft heading for two minutes using the current groundspeed.
+- Added `moving_map.heading_prediction_seconds` (default: `120`) to configure the projection duration.
+
+### Improved
+- Verified flight-track persistence across FlyWithLua reloads and simulator restarts: the saved track is restored on startup, continues recording independently of the Moving Map window, and is cleared only by the existing manual reset control.
+- Improved flight-track write-error handling and ensured a failed file deletion/truncation cannot silently report a successful track reset.
+- Updated release metadata and OpenStreetMap/Overpass user agents to 1.0.17.
+
 ## 1.0.16 — 2026-10-04
 
 ### Added

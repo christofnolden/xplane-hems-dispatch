@@ -430,8 +430,12 @@ local function append_track_point(point)
 
     local break_flag = point.break_before and 1 or 0
     local ok, err = pcall(function()
-        M.track_file:write(string.format("%.8f\t%.8f\t%d\n", point.lat, point.lon, break_flag))
-        M.track_file:flush()
+        local written, write_err = M.track_file:write(
+            string.format("%.8f\t%.8f\t%d\n", point.lat, point.lon, break_flag)
+        )
+        if not written then error(write_err or "write failed") end
+        local flushed, flush_err = M.track_file:flush()
+        if not flushed then error(flush_err or "flush failed") end
     end)
     if not ok then
         if not M.track_persistence_warned then
@@ -540,7 +544,27 @@ end
 function M.reset_track()
     close_track_file()
     if HEMS.paths and HEMS.paths.flight_track then
-        os.remove(HEMS.paths.flight_track)
+        local track_path = HEMS.paths.flight_track
+        local existing = io.open(track_path, "rb")
+        if existing then
+            existing:close()
+            local removed, err = os.remove(track_path)
+            if not removed then
+                -- Some Windows file-system setups disallow removing a file but
+                -- permit truncating it. Never claim the history was removed if
+                -- both operations fail: otherwise it would reappear on reload.
+                local truncated, truncate_err = io.open(track_path, "wb")
+                if truncated then
+                    truncated:close()
+                else
+                    local message = "Moving Map: Persisted flight track could not be reset: "
+                        .. tostring(err or truncate_err)
+                    HEMS.log(message)
+                    HEMS.status_message = message
+                    return false
+                end
+            end
+        end
     end
     M.track_points = {}
     M.track_revision = M.track_revision + 1
@@ -1051,6 +1075,64 @@ local function draw_track(center_world_x, center_world_y, canvas_x, canvas_y, wi
     end
 end
 
+-- A two-minute heading extension, measured from the current aircraft position.
+-- This is a heading projection (not ground track or wind-corrected routing).
+-- Map projection and clipping are shared with the existing navigation lines.
+local function heading_prediction_endpoint(lat, lon, heading_deg, groundspeed_kt)
+    local speed = tonumber(groundspeed_kt)
+    local heading = tonumber(heading_deg)
+    if not lat or not lon or not speed or not heading or speed ~= speed or heading ~= heading or speed <= 0 then
+        return nil
+    end
+
+    local seconds = tonumber(cfg().heading_prediction_seconds) or 120
+    if seconds <= 0 then return nil end
+    -- kt = nautical miles/hour; convert the travel distance to kilometres.
+    local distance_km = speed * (seconds / 3600.0) * 1.852
+    return HEMS.geo.destination(lat, lon, heading % 360, distance_km)
+end
+
+local function draw_heading_prediction(center_world_x, center_world_y, canvas_x, canvas_y, width, height)
+    if not M.nav.valid then return end
+    local endpoint_lat, endpoint_lon = heading_prediction_endpoint(
+        M.nav.lat, M.nav.lon, M.nav.heading_deg, M.nav.groundspeed_kt
+    )
+    if not endpoint_lat then return end
+
+    local sx, sy = map_point(
+        M.nav.lat, M.nav.lon, center_world_x, center_world_y, M.zoom,
+        canvas_x, canvas_y, width, height
+    )
+    local ex, ey = map_point(
+        endpoint_lat, endpoint_lon, center_world_x, center_world_y, M.zoom,
+        canvas_x, canvas_y, width, height
+    )
+    local x0, y0, x1, y1 = clip_line_to_rect(
+        sx, sy, ex, ey,
+        canvas_x + 5, canvas_y + 5,
+        canvas_x + width - 5, canvas_y + height - 5
+    )
+    if not x0 then return end
+
+    local dx, dy = x1 - x0, y1 - y0
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length < 1 then return end
+
+    local ux, uy = dx / length, dy / length
+    local dash, gap = 7.0, 5.0
+    local color, thickness = 0xFF555555, 2.0 -- neutral grey, thinner than track (2.5) / Direct-To (3)
+    local pos = 0
+    while pos < length do
+        local finish = math.min(length, pos + dash)
+        imgui.DrawList_AddLine(
+            x0 + ux * pos, y0 + uy * pos,
+            x0 + ux * finish, y0 + uy * finish,
+            color, thickness
+        )
+        pos = pos + dash + gap
+    end
+end
+
 local function draw_map_canvas(width, height)
     local hidden_scrollbars = push_hidden_scrollbar_colors()
     imgui.BeginChild("##hems_moving_map_canvas", width, height)
@@ -1092,6 +1174,7 @@ local function draw_map_canvas(width, height)
     end
 
     draw_track(center_world_x, center_world_y, canvas_x, canvas_y, width, height)
+    draw_heading_prediction(center_world_x, center_world_y, canvas_x, canvas_y, width, height)
 
     local aircraft_x, aircraft_y = map_point(
         M.nav.lat, M.nav.lon,

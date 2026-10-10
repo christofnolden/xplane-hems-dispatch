@@ -379,7 +379,7 @@ local function spawn_download_windows(url, part_path)
     local ok_win, win_err = init_windows_api()
     if not ok_win then return nil, win_err end
 
-    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.16 (X-Plane 12; FlyWithLua NG+)")
+    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.17 (X-Plane 12; FlyWithLua NG+)")
     local curl = tostring(cfg().curl_executable or "curl.exe")
     local args = {
         curl,
@@ -431,7 +431,7 @@ local function spawn_download_windows(url, part_path)
 end
 
 local function spawn_download_posix(url, part_path)
-    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.16 (X-Plane 12; FlyWithLua NG+)")
+    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.17 (X-Plane 12; FlyWithLua NG+)")
     local curl = tostring(cfg().curl_executable or "curl")
     local args = table.concat({
         shell_quote(curl),

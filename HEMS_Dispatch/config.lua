@@ -1,9 +1,9 @@
--- HEMS Dispatch v1.0.16 configuration
+-- HEMS Dispatch v1.0.17 configuration
 -- This file can be reloaded from Plugins > HEMS Dispatch > Reload configuration.
 
 return {
     dispatch = {
-        min_radius_km = 5.0,
+        min_radius_km = 1.0,
         max_radius_km = 50.0,
 
         -- The target distance is sampled uniformly between min/max radius:
@@ -43,6 +43,7 @@ return {
             -- POLICE = { min = 0, max = 1 },
             units = {
                 RTW = { min = 1, max = 1 },
+				NEF =    { min = 0, max = 1 },
             },
         },
         {
@@ -121,9 +122,13 @@ return {
         track_interval_seconds = 0.5,
         track_min_distance_m = 3.0,
 
+        -- Grey dashed heading extension: projected travel distance in 120 s
+        -- at the current groundspeed, independent of any Direct-To route.
+        heading_prediction_seconds = 120,
+
         -- OpenStreetMap standard tile server. Keep attribution visible in the map.
         tile_url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        user_agent = "HEMS-Dispatch/1.0.16 (X-Plane 12; FlyWithLua NG+)",
+        user_agent = "HEMS-Dispatch/1.0.17 (X-Plane 12; FlyWithLua NG+)",
 
         -- curl is included with current Windows versions and commonly available on
         -- macOS/Linux. Downloads run asynchronously so X-Plane is not blocked.
@@ -146,7 +151,7 @@ return {
 
         -- Public OpenStreetMap Overpass API endpoint used for hospital POIs.
         overpass_url = "https://overpass-api.de/api/interpreter",
-        user_agent = "HEMS-Dispatch/1.0.16 (X-Plane 12; FlyWithLua NG+)",
+        user_agent = "HEMS-Dispatch/1.0.17 (X-Plane 12; FlyWithLua NG+)",
 
         curl_executable = (SYSTEM == "IBM") and "curl.exe" or "curl",
         connect_timeout_seconds = 5,

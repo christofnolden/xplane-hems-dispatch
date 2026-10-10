@@ -1,11 +1,11 @@
 -- HEMS Dispatch for X-Plane 12 / FlyWithLua NG+
--- Version 1.0.16
+-- Version 1.0.17
 --
 -- Install this file and the HEMS_Dispatch directory directly into:
 --   X-Plane 12/Resources/plugins/FlyWithLua/Scripts/
 
 HEMS = HEMS or {}
-HEMS.VERSION = "1.0.16"
+HEMS.VERSION = "1.0.17"
 HEMS.NAME = "HEMS Dispatch"
 HEMS.active_mission = nil
 HEMS.status_message = "Initializing HEMS Dispatch ..."

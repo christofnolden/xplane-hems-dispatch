@@ -440,7 +440,7 @@ local function start_request(radius_km, force_reload)
 
     local query = build_query(radius_km, lat, lon)
     local overpass_url = tostring(cfg().overpass_url or "https://overpass-api.de/api/interpreter")
-    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.16 (X-Plane 12; FlyWithLua NG+)")
+    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.17 (X-Plane 12; FlyWithLua NG+)")
     local curl = tostring(cfg().curl_executable or ((SYSTEM == "IBM") and "curl.exe" or "curl"))
     local connect_timeout = tonumber(cfg().connect_timeout_seconds) or 5
     local request_timeout = tonumber(cfg().request_timeout_seconds) or 35

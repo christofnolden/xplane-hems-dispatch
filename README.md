@@ -1,6 +1,6 @@
 # HEMS Dispatch for X-Plane 12
 
-**Version:** 1.0.16
+**Version:** 1.0.17
 
 HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations are derived from the installed **SimHeaven X-World Europe road network**, while emergency vehicles are loaded from **RescueX_Lib** and placed along the actual road geometry.
 
@@ -16,6 +16,7 @@ HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations a
 - Random crashed vehicles for traffic accidents
 - **Integrated OpenStreetMap Moving Map** with a responsive, scrollbar-free layout
 - **Persistent flight track** showing the actually flown route across flights/reloads until manually reset
+- **Grey dashed heading prediction** from the aircraft position, extending approximately two minutes of travel at the current groundspeed
 - **Red Direct-To navigation** with a fixed route start for active missions, the saved home base, and selected hospitals
 - **Persistent Base Position** with a one-click **Direct to base** function in the Moving Map
 - **Hospital Direct-To** with nearby OpenStreetMap hospitals sorted by distance, initially within 50 km and optionally extended to 100 km
@@ -130,6 +131,8 @@ The Base Position is stored in:
 HEMS_Dispatch/output/base_position.dat
 ```
 
+The **grey dashed heading prediction** starts at the current aircraft position, follows the aircraft's current heading (not necessarily its actual ground track) and has a length corresponding to **120 seconds at the current groundspeed**. It updates with heading, speed and position; unlike a Direct-To route, it is not a stored route. Its thin line remains visible independently of mission selection.
+
 The **flight track is orange (`#ffa500`)** and records the actually flown route. By default, a new track point is considered every **0.5 seconds** and stored once the aircraft has moved at least **3 meters**. The track continues recording while the Moving Map window is closed and is persisted across X-Plane/FlyWithLua reloads and new flights until it is manually reset with the existing track-reset button.
 
 The persisted track is stored in:
@@ -213,6 +216,7 @@ Configurable options include:
 - Maximum terrain slope
 - Moving Map size, zoom and update rates
 - Flight-track interval and minimum movement
+- Heading-prediction duration (default: 120 seconds)
 - OSM tile URL, download settings and texture limit
 - Hospital search radii, Overpass endpoint, request timeout and persistent hospital cache behavior
 
@@ -254,7 +258,7 @@ SimHeaven X-World Europe, RescueX_Lib, FlyWithLua NG+ and OpenStreetMap are sepa
 
 # HEMS Dispatch für X-Plane 12
 
-**Version:** 1.0.16
+**Version:** 1.0.17
 
 HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte werden aus dem installierten **SimHeaven X-World Europe Straßennetz** abgeleitet. Einsatzfahrzeuge werden aus **RescueX_Lib** geladen und entlang des tatsächlichen Straßenverlaufs platziert.
 
@@ -270,6 +274,7 @@ HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte
 - Zufällige Unfallfahrzeuge bei Verkehrsunfällen
 - **Integrierte OpenStreetMap Moving Map** mit responsivem, scrollbar-freiem Layout
 - **Persistente Flugspur** der tatsächlich geflogenen Strecke über neue Flüge/Reloads hinweg bis zum manuellen Zurücksetzen
+- **Grau gestrichelte Heading-Prognose** ab der aktuellen Hubschrauberposition über rund zwei Minuten Flugstrecke anhand der momentanen Groundspeed
 - **Rote Direct-To-Navigation** mit festem Routenstart zur aktiven Einsatzstelle, zur gespeicherten Heimatbasis und zu ausgewählten Krankenhäusern
 - **Persistente Base Position** mit **Direct to base** über einen Haus-Button in der Moving Map
 - **Hospital Direct-To** mit Krankenhäusern aus OpenStreetMap, nach Entfernung sortiert; zunächst 50 km, optional erweiterbar auf 100 km
@@ -386,6 +391,8 @@ Die Base Position wird lokal gespeichert unter:
 HEMS_Dispatch/output/base_position.dat
 ```
 
+Die **grau gestrichelte Heading-Prognose** beginnt an der aktuellen Hubschrauberposition und zeigt in Richtung des aktuellen Headings (nicht zwingend der tatsächlichen Bewegung über Grund). Ihre Länge entspricht **120 Sekunden Flugstrecke mit der momentanen Groundspeed**. Sie folgt der aktuellen Position, dem Heading und der Geschwindigkeit, unabhängig von der gewählten Direct-To-Route.
+
 Die **Flugspur ist orange (`#ffa500`)** und zeigt die tatsächlich geflogene Strecke. Standardmäßig wird alle **0,5 Sekunden** ein möglicher Trackpunkt geprüft und gespeichert, sobald sich der Hubschrauber mindestens **3 Meter** bewegt hat. Das Tracking läuft auch bei geschlossenem Moving-Map-Fenster weiter und wird über X-Plane-/FlyWithLua-Reloads sowie neue Flüge hinweg gespeichert, bis es über den vorhandenen Track-Reset-Button manuell zurückgesetzt wird.
 
 Die persistente Flugspur wird gespeichert unter:
@@ -469,6 +476,7 @@ Konfigurierbar sind unter anderem:
 - maximale Geländeneigung
 - Größe, Zoom und Update-Raten der Moving Map
 - Intervall und Mindestbewegung der Flugspur
+- Dauer der Heading-Prognose (Standard: 120 Sekunden)
 - OSM-Tile-URL, Download-Einstellungen und Texture-Limit
 - Krankenhaus-Suchradien, Overpass-Endpunkt, Request-Timeout und persistentes Krankenhaus-Caching
 
