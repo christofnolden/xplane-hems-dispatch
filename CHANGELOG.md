@@ -2,6 +2,42 @@
 
 All notable changes to HEMS Dispatch are documented in this file.
 
+## 1.1.2 — 2026-10-31
+
+### Added
+- Added bindable X-Plane commands `hems_dispatch/map_zoom_in` and `hems_dispatch/map_zoom_out` for Moving Map zoom control via keyboard, joystick, or VR controller.
+- Both commands use the same one-level zoom steps, configured zoom limits and cache refresh behavior as the existing Moving Map +/- buttons. The commands have no effect while the Moving Map is closed.
+
+### Changed
+- Updated release version metadata and README; no other Moving Map features or mission behavior were changed.
+
+## 1.1.1 — 2026-10-24
+
+### Fixed
+- Fixed the Moving Map GPU texture limit reached during frequent map zooming, panning or mission changes. Off-screen OSM textures are now evicted from GPU memory using OpenGL when the configured rolling texture budget is full. Already downloaded tiles remain on disk and are transparently reloaded when revisited; no FlyWithLua script reload is needed.
+- Protected currently visible map tiles from eviction during the current frame to prevent disappearing tile imagery in North Up and Heading Up.
+
+### Added
+- After a successfully created random or custom mission, automatically center the Moving Map on the **actual generated emergency scene** at a reconnaissance-friendly zoom level. `moving_map.mission_preview_zoom` defaults to 16 and is clamped to the existing map zoom limits. Follow Aircraft is temporarily disabled and can be restored with its existing toolbar button.
+
+### Changed
+- `moving_map.max_loaded_textures` now defines the maximum number of **simultaneously resident** map textures rather than a permanent lifetime cap. The original 384-texture default is retained.
+- Updated README (English/German), version metadata and OSM/Overpass user agents for v1.1.1.
+
+## 1.1.0 — 2026-10-24
+
+### Added
+- Added **New custom mission** to the Moving Map between **New random mission** and **End mission**. Users select **Medical emergency** or **Traffic accident**, then click a location on the map to generate the emergency scene near that position.
+- Added a persistent map-selection prompt with **Cancel selection**, plus accurate geographic click-to-coordinate conversion in **North Up** and **Heading Up** modes.
+- Added nearest-road selection for custom missions using the existing SimHeaven HRI-v2 road cache and RescueX/terrain scene validation. Custom missions can be created outside the configured random-dispatch minimum and maximum distances.
+- Added `dispatch.custom_road_search_radius_km` (default 1 km, allowed 0.1–5 km) to bound how far a custom map-click mission may snap to a suitable road.
+- Added confirmation prompts for **Reset flight track**, **End mission**, and replacing an existing mission with **New random mission** or **New custom mission**. Choosing **No** leaves the flight track and active mission unchanged.
+
+### Changed
+- Renamed the Moving Map **New mission** button to **New random mission**. Existing plugin-menu commands retain their original behavior.
+- Shared the existing mission-activation path between random and custom mission generation. Custom mission scene work is deferred to the pre-flightloop to avoid X-Plane crashes from XPLM instance calls in ImGui callbacks.
+- Updated README (English and German), version metadata, and OSM/Overpass user agents for v1.1.0.
+
 ## 1.0.181 — 2026-10-17
 
 ### Changed

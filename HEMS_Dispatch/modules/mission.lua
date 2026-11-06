@@ -43,6 +43,12 @@ function M.validate_config(cfg)
     if not tonumber(cfg.dispatch.road_search_radius_km) or cfg.dispatch.road_search_radius_km <= 0 then
         return false, "dispatch.road_search_radius_km must be > 0."
     end
+    if cfg.dispatch.custom_road_search_radius_km ~= nil then
+        local custom_radius = tonumber(cfg.dispatch.custom_road_search_radius_km)
+        if not custom_radius or custom_radius < 0.1 or custom_radius > 5 then
+            return false, "dispatch.custom_road_search_radius_km must be between 0.1 and 5 km."
+        end
+    end
     if not tonumber(cfg.dispatch.max_target_attempts) or cfg.dispatch.max_target_attempts < 1 then
         return false, "dispatch.max_target_attempts must be >= 1."
     end
@@ -240,10 +246,10 @@ local function build_mission(mission_def, road_group, candidate, tile_name, heli
     }
 end
 
-local function try_candidate(mission_def, plan, road_group, cache, tile_name, candidate, heli_lat, heli_lon)
+local function try_candidate(mission_def, plan, road_group, cache, tile_name, candidate, heli_lat, heli_lon, ignore_dispatch_radius)
     local exact_distance = HEMS.geo.distance_km(heli_lat, heli_lon, candidate.lat, candidate.lon)
-    if exact_distance < HEMS.config.dispatch.min_radius_km
-        or exact_distance > HEMS.config.dispatch.max_radius_km then
+    if not ignore_dispatch_radius and (exact_distance < HEMS.config.dispatch.min_radius_km
+        or exact_distance > HEMS.config.dispatch.max_radius_km) then
         return nil, "Candidate was outside the dispatch radius after exact distance validation."
     end
 
@@ -292,6 +298,43 @@ local function try_candidate(mission_def, plan, road_group, cache, tile_name, ca
         heli_lon,
         scene
     )
+    return mission
+end
+
+-- Shared activation path for both mission types. Scene creation is always
+-- executed by the pre-flightloop dispatcher, never an ImGui draw callback.
+local function activate_mission(mission, options)
+    HEMS.active_mission = mission
+    HEMS.status_message = "Mission active."
+    M.write_active_output(mission)
+
+    if HEMS.movingmap and HEMS.movingmap.set_direct_to_active_mission then
+        local route_ok, route_err = HEMS.movingmap.set_direct_to_active_mission({ announce = false })
+        if not route_ok then
+            HEMS.log("WARNING: Mission Direct-To could not be initialized: " .. tostring(route_err))
+        end
+    end
+
+    HEMS.log(string.format(
+        "Mission generated: %s | %s | %.1f km | BRG %03d | %s",
+        mission.name,
+        HEMS.util.format_coord(mission.lat, mission.lon, 5),
+        mission.distance_km,
+        floor(mission.bearing_deg + 0.5) % 360,
+        M.unit_summary(mission.units)
+    ))
+    if HEMS.config.output.auto_open_info_window and options.show_info_on_success ~= false then
+        HEMS.ui.show_info()
+    end
+    if HEMS.config.moving_map and HEMS.config.moving_map.auto_open_on_new_mission then
+        HEMS.movingmap.show()
+    end
+    -- show() initializes the usual aircraft-centered default on a newly opened
+    -- window. Focus afterwards so both existing and new map windows show the
+    -- real generated scene for landing-zone inspection. No XPLM work here.
+    if HEMS.movingmap and HEMS.movingmap.window and HEMS.movingmap.focus_on_mission then
+        HEMS.movingmap.focus_on_mission(mission)
+    end
     return mission
 end
 
@@ -395,36 +438,7 @@ function M.new_mission(options)
                     )
 
                     if mission then
-                        HEMS.active_mission = mission
-                        HEMS.status_message = "Mission active."
-                        M.write_active_output(mission)
-
-                        -- Capture the mission Direct-To start exactly once when
-                        -- the mission becomes active. The drawn route then stays
-                        -- fixed until the user explicitly resets it.
-                        if HEMS.movingmap and HEMS.movingmap.set_direct_to_active_mission then
-                            local route_ok, route_err = HEMS.movingmap.set_direct_to_active_mission({ announce = false })
-                            if not route_ok then
-                                HEMS.log("WARNING: Mission Direct-To could not be initialized: " .. tostring(route_err))
-                            end
-                        end
-
-                        HEMS.log(string.format(
-                            "Mission generated: %s | %s | %.1f km | BRG %03d | %s",
-                            mission.name,
-                            HEMS.util.format_coord(mission.lat, mission.lon, 5),
-                            mission.distance_km,
-                            floor(mission.bearing_deg + 0.5) % 360,
-                            M.unit_summary(mission.units)
-                        ))
-
-                        if HEMS.config.output.auto_open_info_window and options.show_info_on_success ~= false then
-                            HEMS.ui.show_info()
-                        end
-                        if HEMS.config.moving_map and HEMS.config.moving_map.auto_open_on_new_mission then
-                            HEMS.movingmap.show()
-                        end
-                        return mission
+                        return activate_mission(mission, options)
                     end
 
                     last_error = candidate_err
@@ -442,6 +456,121 @@ function M.new_mission(options)
     HEMS.status_message = "No suitable mission location found. Last reason: " .. tostring(last_error or "unknown")
     HEMS.log(HEMS.status_message)
     HEMS.ui.show_info()
+end
+
+-- Create a medical or traffic-accident scene near a user-selected map
+-- coordinate. Unlike random dispatch, it is not limited by the distance from
+-- the helicopter, but uses all the same road/terrain/RescueX validation.
+function M.new_custom_mission(options)
+    options = type(options) == "table" and options or {}
+    if not HEMS.initialized then
+        HEMS.status_message = "HEMS Dispatch is not fully initialized."
+        HEMS.ui.show_info()
+        return nil
+    end
+
+    local target_lat = tonumber(options.lat)
+    local target_lon = tonumber(options.lon)
+    if not target_lat or not target_lon or target_lat ~= target_lat or target_lon ~= target_lon
+        or target_lat < -85 or target_lat > 85 or target_lon < -180 or target_lon > 180 then
+        error("Custom mission coordinates are invalid.")
+    end
+    local heli_lat, heli_lon = tonumber(LATITUDE), tonumber(LONGITUDE)
+    if not heli_lat or not heli_lon then error("Current helicopter position could not be read.") end
+
+    local mission_def
+    for _, definition in ipairs(HEMS.config.missions) do
+        if definition.id == options.mission_id then mission_def = definition; break end
+    end
+    if not mission_def then error("Unknown custom mission type: " .. tostring(options.mission_id)) end
+
+    -- Only replace the previous mission after coordinates/type are valid.
+    -- The user has already confirmed replacement in the Moving Map.
+    if HEMS.movingmap and HEMS.movingmap.clear_navigation_override then
+        HEMS.movingmap.clear_navigation_override()
+    end
+    if HEMS.active_mission then
+        HEMS.log("Custom mission requested: replacing active mission after user confirmation.")
+        M.end_mission(true)
+    end
+
+    -- Custom selection uses any road group allowed for the chosen emergency
+    -- type, favouring the road closest to the click. Random missions retain
+    -- their weighted road-group selection unchanged.
+    local allowed_road_groups = {}
+    for _, group in ipairs(mission_def.road_groups) do
+        allowed_road_groups[#allowed_road_groups + 1] = group.id
+    end
+    if #allowed_road_groups == 0 then error("No road class is configured.") end
+    local plan = HEMS.rescuex.plan_scene(mission_def)
+    HEMS.status_message = "Searching for a suitable road near the selected map position ..."
+    local search_radius_km = tonumber(HEMS.config.dispatch.custom_road_search_radius_km) or 1.0
+
+    HEMS.log(string.format("Custom mission: Type=%s | Click=%.6f/%.6f | Allowed roads=%s | Road search <= %.1f km",
+        mission_def.id, target_lat, target_lon, table.concat(allowed_road_groups, ","), search_radius_km))
+
+    -- Search the selected DSF and any directly adjacent DSF intersected by
+    -- the small road-search circle. This covers clicks close to tile borders.
+    local tile_lats, tile_lons = { floor(target_lat) }, { floor(target_lon) }
+    local lat_delta = search_radius_km / 111.2
+    local cos_lat = math.max(0.05, math.abs(math.cos(math.rad(target_lat))))
+    local lon_delta = search_radius_km / (111.2 * cos_lat)
+    if target_lat - floor(target_lat) < lat_delta then tile_lats[#tile_lats + 1] = floor(target_lat) - 1 end
+    if floor(target_lat) + 1 - target_lat < lat_delta then tile_lats[#tile_lats + 1] = floor(target_lat) + 1 end
+    if target_lon - floor(target_lon) < lon_delta then tile_lons[#tile_lons + 1] = floor(target_lon) - 1 end
+    if floor(target_lon) + 1 - target_lon < lon_delta then tile_lons[#tile_lons + 1] = floor(target_lon) + 1 end
+
+    local combined, errors = {}, {}
+    for _, tile_lat in ipairs(tile_lats) do
+        for _, tile_lon in ipairs(tile_lons) do
+            local _, tile_name = HEMS.dsf.source_dsf_path(tile_lat, tile_lon)
+            local cache, cache_err = HEMS.dsf.ensure_cache(tile_lat, tile_lon)
+            if cache then
+                local candidates, reason = HEMS.dsf.select_candidates(
+                    cache, target_lat, target_lon, heli_lat, heli_lon, allowed_road_groups,
+                    CANDIDATE_SAMPLE_LIMIT,
+                    { ignore_dispatch_radius = true, nearest_first = true, search_radius_km = search_radius_km }
+                )
+                if candidates then
+                    for _, candidate in ipairs(candidates) do
+                        combined[#combined + 1] = { candidate = candidate, cache = cache, tile_name = tile_name }
+                    end
+                else
+                    errors[#errors + 1] = tostring(reason)
+                end
+            else
+                errors[#errors + 1] = tostring(cache_err)
+            end
+        end
+    end
+
+    table.sort(combined, function(a, b)
+        return (a.candidate._distance_sq_km or 1e10) < (b.candidate._distance_sq_km or 1e10)
+    end)
+    local last_error = nil
+    for index = 1, math.min(#combined, CANDIDATE_SAMPLE_LIMIT) do
+        local entry = combined[index]
+        local actual_road_group = HEMS.dsf.road_group_name(entry.candidate.subtype):lower()
+        if actual_road_group == "single lane" then actual_road_group = "single" end
+        local mission, err = try_candidate(
+            mission_def, plan, actual_road_group, entry.cache, entry.tile_name,
+            entry.candidate, heli_lat, heli_lon, true
+        )
+        if mission then
+            mission.custom = true
+            mission.requested_lat = target_lat
+            mission.requested_lon = target_lon
+            return activate_mission(mission, options)
+        end
+        last_error = err
+        HEMS.log(string.format("Custom mission road candidate %d rejected: %s", index, tostring(err)))
+    end
+
+    HEMS.status_message = "Custom mission: no suitable road within " .. tostring(search_radius_km)
+        .. " km of the map click. " .. tostring(last_error or errors[1] or "Try another position.")
+    HEMS.log(HEMS.status_message)
+    HEMS.ui.show_info()
+    return nil
 end
 
 function M.end_mission(silent)

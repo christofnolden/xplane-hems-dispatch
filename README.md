@@ -1,6 +1,6 @@
 # HEMS Dispatch for X-Plane 12
 
-**Version:** 1.0.181
+**Version:** 1.1.2
 
 HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations are derived from the installed **SimHeaven X-World Europe road network**, while emergency vehicles are loaded from **RescueX_Lib** and placed along the actual road geometry.
 
@@ -8,6 +8,7 @@ HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations a
 
 - **English runtime UI** across the plugin menu, Moving Map, status messages, and mission information window.
 - Random HEMS missions within a configurable dispatch radius
+- **Custom HEMS missions** at a user-selected Moving Map position, without random mission distance limits
 - Medical emergencies and traffic accidents
 - Road-based mission placement using SimHeaven X-World Europe
 - RescueX emergency vehicles placed along the actual road course
@@ -15,7 +16,7 @@ HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations a
 - Configurable combinations of `RTW`, `NEF`, `FIRE` and `POLICE`
 - Random crashed vehicles for traffic accidents
 - **Integrated OpenStreetMap Moving Map** with a responsive, scrollbar-free layout and selectable **North Up / Heading Up** orientation
-- **Persistent flight track** showing the actually flown route across flights/reloads until manually reset
+- **Persistent flight track** showing the actually flown route across flights/reloads until manually reset, now with reset confirmation
 - **Black dashed heading prediction** from the aircraft position, extending approximately two minutes of travel at the current groundspeed
 - **Red Direct-To navigation** with a fixed route start for active missions, the saved home base, and selected hospitals
 - **Persistent Base Position** with a one-click **Direct to base** function in the Moving Map
@@ -23,7 +24,8 @@ HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations a
 - Free map panning, zoom and **Follow Aircraft** mode
 - Live bearing, distance, groundspeed and ETA in an in-map status overlay
 - Compact mission start/end controls directly in the Moving Map
-- Local OSM tile cache for previously viewed map areas
+- **Rolling GPU texture cache** that releases off-screen map tiles automatically; downloaded OSM tiles remain stored on disk
+- **Automatic mission preview** centered on the generated scene at zoom level 16 (configurable)
 - Bindable X-Plane commands for keyboard, joystick and VR controllers
 - Text output of the active mission for VR workflows
 
@@ -96,11 +98,13 @@ hems_dispatch/new_mission
 hems_dispatch/end_mission
 hems_dispatch/show_info
 hems_dispatch/toggle_moving_map
+hems_dispatch/map_zoom_in
+hems_dispatch/map_zoom_out
 hems_dispatch/set_base_position
 hems_dispatch/reload_config
 ```
 
-These commands can be assigned to keyboard keys, joystick buttons or VR controllers. `hems_dispatch/toggle_moving_map` opens the Moving Map when it is closed and closes it when it is open. `hems_dispatch/set_base_position` stores the helicopter's current position as the home base.
+These commands can be assigned to keyboard keys, joystick buttons or VR controllers. `hems_dispatch/toggle_moving_map` opens the Moving Map when it is closed and closes it when it is open. `hems_dispatch/map_zoom_in` and `hems_dispatch/map_zoom_out` adjust the zoom by one step while the Moving Map is open, using the same configured limits as the toolbar buttons. `hems_dispatch/set_base_position` stores the helicopter's current position as the home base.
 
 ## Moving Map
 
@@ -113,14 +117,17 @@ The compact toolbar provides:
 - `-` / `+` — zoom out / in
 - Navigation icon — center the map on the helicopter and enable **Follow Aircraft**
 - Compass icon — toggle **North Up / Heading Up** (highlighted when Heading Up is active)
-- Reset icon — clear the recorded flight track
+- Reset icon — request confirmation before permanently clearing the recorded flight track
 - Home icon — toggle **Direct to base** using the saved Base Position
 - Bullseye icon — **Direct to Active mission**; replace the current Direct-To and capture the helicopter's current position as a new fixed mission-route start
 - Hospital/Cross icon — open the **Hospitals** list and select a hospital Direct-To
-- **New Mission** — create a mission directly from the Moving Map
-- **End Mission** — remove the active mission
+- **New random mission** — generate a random mission; asks for confirmation before replacing an active mission
+- **New custom mission** — choose **Medical emergency** or **Traffic accident**, then click the map to pick the mission location; asks for confirmation before replacing an active mission
+- **End mission** — end an active mission after confirmation
 
-Drag the map with the left mouse button to freely move the map in either orientation; this automatically disables Follow Aircraft. The helicopter position is shown live and the active mission is marked as the destination. Heading Up also works while freely panning the map. A rotated map requires the FlyWithLua ImGui `DrawList_AddImageQuad` binding; if unavailable, HEMS Dispatch keeps the safe North Up display.
+To create a **custom mission**, press **New custom mission**, select the emergency type, and then click the desired point on the map. A selection banner stays visible until you click a location or press **Cancel selection**. Zoom and pan before picking the location as needed. The plugin searches up to **1 km** around the click (configurable through `dispatch.custom_road_search_radius_km`) for the closest usable SimHeaven road and places the emergency scene there; it does not place vehicles on arbitrary terrain. Custom locations may lie **outside `dispatch.min_radius_km` and `dispatch.max_radius_km`**. If no suitable road/terrain/scene is found, HEMS Dispatch reports the problem without placing emergency vehicles. As with random missions, preparing an uncached SimHeaven road tile may briefly take time. All mission creation still runs in the safe pre-flightloop rather than inside the map renderer. Canceling the choice of mission type or map location leaves an existing mission untouched. The confirmation dialogs for replacing or ending an active mission and resetting the recorded flight track also offer **No** to leave everything unchanged.
+
+Drag the map with the left mouse button to freely move the map in either orientation; this automatically disables Follow Aircraft. The helicopter position is shown live and the active mission is marked as the destination. Heading Up also works while freely panning the map. **After successfully generating a random or custom mission**, the Moving Map centers on the actual emergency scene at zoom level `moving_map.mission_preview_zoom` (default **16**) for landing-zone reconnaissance; **Follow Aircraft** is temporarily disabled. Press the navigation/follow icon whenever you want to return to the helicopter. A rotated map requires the FlyWithLua ImGui `DrawList_AddImageQuad` binding; if unavailable, HEMS Dispatch keeps the safe North Up display.
 
 The **Direct-To line is red (`#ff0000`)**. For Mission, Base and Hospital Direct-To routes, the helicopter position is captured once when the Direct-To is set and becomes the **fixed start point** of that route. The line therefore remains anchored to that position while the helicopter, Moving Map and orange flight track continue to move normally. Bearing, distance, groundspeed and ETA in the status overlay remain live values based on the helicopter's current position.
 
@@ -159,7 +166,7 @@ Downloaded OSM tiles are cached locally under:
 HEMS_Dispatch/cache/osm/
 ```
 
-If an uncached tile cannot be downloaded, navigation, Direct-To, bearing, distance, ETA and flight tracking continue to work; only the missing map background remains empty.
+The OSM tile GPU cache now uses a **rolling texture budget** (`moving_map.max_loaded_textures`, default **384**): when the budget is reached, non-visible textures are freed and reloaded from disk as needed. This avoids the previous permanent blank-map state after exploring many areas without requiring a FlyWithLua reload. The disk cache is never deleted by GPU eviction. If an uncached tile cannot be downloaded, navigation, Direct-To, bearing, distance, ETA and flight tracking continue to work; only the missing map background remains empty.
 
 ### Hospitals
 
@@ -211,7 +218,7 @@ HEMS_Dispatch/config.lua
 
 Configurable options include:
 
-- Dispatch radius and road search radius
+- Dispatch radius and road search radius (plus independent custom map-click road search radius)
 - Mission probabilities
 - Road class weights
 - Number and type of emergency vehicles
@@ -220,7 +227,8 @@ Configurable options include:
 - Moving Map size, zoom and update rates
 - Flight-track interval and minimum movement
 - Heading-prediction duration (default: 120 seconds)
-- OSM tile URL, download settings and texture limit
+- OSM tile URL, download settings and rolling GPU texture budget
+- Automatic mission preview zoom (`moving_map.mission_preview_zoom`)
 - Hospital search radii, Overpass endpoint, request timeout and persistent hospital cache behavior
 
 Configuration changes can be applied without restarting X-Plane using:
@@ -261,7 +269,7 @@ SimHeaven X-World Europe, RescueX_Lib, FlyWithLua NG+ and OpenStreetMap are sepa
 
 # HEMS Dispatch für X-Plane 12
 
-**Version:** 1.0.181
+**Version:** 1.1.2
 
 HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte werden aus dem installierten **SimHeaven X-World Europe Straßennetz** abgeleitet. Einsatzfahrzeuge werden aus **RescueX_Lib** geladen und entlang des tatsächlichen Straßenverlaufs platziert.
 
@@ -269,6 +277,7 @@ HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte
 
 - **Englische Programmoberfläche** in Plugin-Menü, Moving Map, Statusmeldungen und Einsatzinformationsfenster.
 - Zufällige HEMS-Einsätze innerhalb eines konfigurierbaren Einsatzradius
+- **Manuelle Einsätze** an einer in der Moving Map gewählten Position, unabhängig vom Einsatzradius
 - Medizinische Notfälle und Verkehrsunfälle
 - Straßenbasierte Einsatzplatzierung mit SimHeaven X-World Europe
 - RescueX-Einsatzfahrzeuge entlang des tatsächlichen Straßenverlaufs
@@ -276,7 +285,7 @@ HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte
 - Konfigurierbare Kombinationen aus `RTW`, `NEF`, `FIRE` und `POLICE`
 - Zufällige Unfallfahrzeuge bei Verkehrsunfällen
 - **Integrierte OpenStreetMap Moving Map** mit responsivem, scrollbar-freiem Layout und umschaltbarer **North Up / Heading Up**-Ausrichtung
-- **Persistente Flugspur** der tatsächlich geflogenen Strecke über neue Flüge/Reloads hinweg bis zum manuellen Zurücksetzen
+- **Persistente Flugspur**, die die tatsächlich geflogene Route über Flüge/Reloads hinweg bis zum manuell bestätigten Zurücksetzen erhält
 - **Schwarz gestrichelte Heading-Prognose** ab der aktuellen Hubschrauberposition über rund zwei Minuten Flugstrecke anhand der momentanen Groundspeed
 - **Rote Direct-To-Navigation** mit festem Routenstart zur aktiven Einsatzstelle, zur gespeicherten Heimatbasis und zu ausgewählten Krankenhäusern
 - **Persistente Base Position** mit **Direct to base** über einen Haus-Button in der Moving Map
@@ -284,7 +293,8 @@ HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte
 - Freies Verschieben der Karte, Zoom und **Follow Aircraft**
 - Live-Anzeige von Bearing, Distanz, Groundspeed und ETA als Overlay direkt in der Karte
 - Kompakte Einsatzsteuerung direkt in der Moving Map
-- Lokaler OSM-Tile-Cache für bereits betrachtete Kartenbereiche
+- **Rollierender GPU-Texturcache** mit automatischer Freigabe nicht sichtbarer Kacheln; OSM-Dateien bleiben lokal gespeichert
+- **Automatische Einsatzvorschau** auf der tatsächlichen Einsatzstelle bei Zoomstufe 16 (konfigurierbar)
 - Bindbare X-Plane-Commands für Tastatur, Joystick und VR-Controller
 - Textausgabe des aktiven Einsatzes für VR-Workflows
 
@@ -359,11 +369,13 @@ hems_dispatch/new_mission
 hems_dispatch/end_mission
 hems_dispatch/show_info
 hems_dispatch/toggle_moving_map
+hems_dispatch/map_zoom_in
+hems_dispatch/map_zoom_out
 hems_dispatch/set_base_position
 hems_dispatch/reload_config
 ```
 
-Die Commands können auf Tastatur, Joystick oder VR-Controller gelegt werden. `hems_dispatch/toggle_moving_map` öffnet die Moving Map, wenn sie geschlossen ist, und schließt sie wieder, wenn sie geöffnet ist. `hems_dispatch/set_base_position` speichert die aktuelle Hubschrauberposition als Heimatbasis.
+Die Commands können auf Tastatur, Joystick oder VR-Controller gelegt werden. `hems_dispatch/toggle_moving_map` öffnet die Moving Map, wenn sie geschlossen ist, und schließt sie wieder, wenn sie geöffnet ist. Mit `hems_dispatch/map_zoom_in` und `hems_dispatch/map_zoom_out` wird bei geöffneter Moving Map um jeweils eine Zoomstufe hinein- oder herausgezoomt; dabei gelten dieselben Grenzen wie für die Toolbar-Buttons. `hems_dispatch/set_base_position` speichert die aktuelle Hubschrauberposition als Heimatbasis.
 
 ## Moving Map
 
@@ -376,14 +388,17 @@ Die kompakte Toolbar bietet:
 - `-` / `+` — heraus- / hineinzoomen
 - Navigationssymbol — Karte auf den Hubschrauber zentrieren und **Follow Aircraft** aktivieren
 - Kompass-Symbol — zwischen **North Up / Heading Up** umschalten (aktiv in Heading Up)
-- Reset-Symbol — aufgezeichnete Flugspur zurücksetzen
+- Reset-Symbol — aufgezeichnete Flugspur erst nach Bestätigungsdialog löschen
 - Haus-Symbol — **Direct to base** zur gespeicherten Base Position ein-/ausschalten
 - Fadenkreuz-/Zielsymbol — **Direct to Active mission**; die aktuelle Direct-To-Route ersetzen und die aktuelle Heli-Position als neuen festen Startpunkt der Einsatzroute übernehmen
 - Krankenhaus-/Kreuz-Symbol — die **Hospitals**-Liste öffnen und ein Krankenhaus als Direct-To-Ziel auswählen
-- **New Mission** — direkt aus der Moving Map einen Einsatz erzeugen
-- **End Mission** — aktiven Einsatz entfernen
+- **New random mission** — zufälligen Einsatz erzeugen; bei aktivem Einsatz mit Bestätigungsdialog
+- **New custom mission** — **Medical emergency** oder **Traffic accident** auswählen und anschließend die Position auf der Karte anklicken; bei aktivem Einsatz mit Bestätigungsdialog
+- **End mission** — aktiven Einsatz nach Bestätigung beenden
 
-Die Karte lässt sich in beiden Ausrichtungen mit gedrückter linker Maustaste frei verschieben; dadurch wird Follow Aircraft automatisch deaktiviert. Heading Up funktioniert auch bei freier Kartenverschiebung. Die aktuelle Hubschrauberposition wird live dargestellt und die aktive Einsatzstelle als Ziel markiert. Für gedrehte Kartentexturen wird die ImGui-Funktion `DrawList_AddImageQuad` benötigt; fehlt sie in einer FlyWithLua-Version, bleibt die sichere North-Up-Ansicht aktiv.
+Für einen **manuellen Einsatz** zunächst **New custom mission** wählen, dann den Einsatztyp auswählen und anschließend auf die gewünschte Kartenposition klicken. Bis zum Klick oder **Cancel selection** bleibt eine Einblendung sichtbar. Die Karte kann vorher gezoomt und verschoben werden. Das Plugin sucht im Umkreis von standardmäßig **1 km** (`dispatch.custom_road_search_radius_km`) die nächstgelegene geeignete SimHeaven-Straße; Fahrzeuge werden also nicht blind auf Gelände platziert. Die manuelle Position darf **außerhalb der Werte `dispatch.min_radius_km` und `dispatch.max_radius_km`** liegen. Falls kein geeigneter Straßen-/Terrainstandort gefunden wird, erscheint eine Fehlermeldung statt einer instabilen oder falschen Einsatzstelle. Die eigentliche Erzeugung wird weiterhin sicher außerhalb des ImGui-Zeichen-Callbacks ausgeführt. Wird die Auswahl abgebrochen, bleibt ein bestehender Einsatz bestehen. Auch alle Bestätigungsdialoge zum Ersetzen/Beenden eines Einsatzes oder Löschen der Flugspur lassen sich mit **No** ohne Änderungen schließen.
+
+Die Karte lässt sich in beiden Ausrichtungen mit gedrückter linker Maustaste frei verschieben; dadurch wird Follow Aircraft automatisch deaktiviert. Heading Up funktioniert auch bei freier Kartenverschiebung. Die aktuelle Hubschrauberposition wird live dargestellt und die aktive Einsatzstelle als Ziel markiert. **Nach jeder erfolgreich erzeugten zufälligen oder manuellen Mission** wird die Moving Map auf die tatsächliche Einsatzstelle bei `moving_map.mission_preview_zoom` (standardmäßig **16**) zentriert, damit der Landeplatz vor dem Abflug betrachtet werden kann. **Follow Aircraft** ist dafür vorübergehend deaktiviert; mit dem bisherigen Follow-Button wird die Karte wieder auf den Hubschrauber zentriert. Für gedrehte Kartentexturen wird die ImGui-Funktion `DrawList_AddImageQuad` benötigt; fehlt sie in einer FlyWithLua-Version, bleibt die sichere North-Up-Ansicht aktiv.
 
 Die **Direct-To-Linie ist rot (`#ff0000`)**. Für Mission-, Base- und Hospital-Direct-To wird die Hubschrauberposition beim Setzen der jeweiligen Route einmalig gespeichert und bildet anschließend den **festen Startpunkt** dieser Route. Die Linie bleibt damit an dieser Position verankert, während sich Hubschrauberposition, Moving Map und orange Flugspur weiterhin normal aktualisieren. Bearing, Distanz, Groundspeed und ETA im Status-Overlay bleiben Live-Werte auf Basis der aktuellen Hubschrauberposition.
 
@@ -422,7 +437,7 @@ Heruntergeladene OSM-Kacheln werden lokal gespeichert unter:
 HEMS_Dispatch/cache/osm/
 ```
 
-Kann eine noch nicht gecachte Kachel nicht geladen werden, funktionieren Navigation, Direct-To, Bearing, Distanz, ETA und Flugspur weiterhin; lediglich der Kartenhintergrund bleibt an dieser Stelle leer.
+Die GPU-Kacheln verwenden ein **rollierendes Texturbudget** (`moving_map.max_loaded_textures`, Standard **384**): Bei Bedarf werden nicht sichtbare Texturen freigegeben und beim erneuten Aufruf aus dem lokalen Disk-Cache geladen. Dadurch blockiert das Limit nicht mehr dauerhaft neue Kartenbereiche. Die bereits gespeicherten OSM-PNG-Dateien bleiben erhalten. Kann eine noch nicht gecachte Kachel nicht geladen werden, funktionieren Navigation, Direct-To, Bearing, Distanz, ETA und Flugspur weiterhin; lediglich der Kartenhintergrund bleibt an dieser Stelle leer.
 
 ### Krankenhäuser
 
@@ -474,7 +489,7 @@ HEMS_Dispatch/config.lua
 
 Konfigurierbar sind unter anderem:
 
-- Einsatzradius und Straßensuchradius
+- Einsatzradius und Straßensuchradius (einschließlich eigenem Radius für manuelle Kartenpositionen)
 - Einsatzwahrscheinlichkeiten
 - Gewichtung der Straßenklassen
 - Anzahl und Typ der Einsatzfahrzeuge
@@ -483,7 +498,8 @@ Konfigurierbar sind unter anderem:
 - Größe, Zoom und Update-Raten der Moving Map
 - Intervall und Mindestbewegung der Flugspur
 - Dauer der Heading-Prognose (Standard: 120 Sekunden)
-- OSM-Tile-URL, Download-Einstellungen und Texture-Limit
+- OSM-Tile-URL, Download-Einstellungen und rollierendes GPU-Texturbudget
+- Zoom der automatischen Einsatzvorschau (`moving_map.mission_preview_zoom`)
 - Krankenhaus-Suchradien, Overpass-Endpunkt, Request-Timeout und persistentes Krankenhaus-Caching
 
 Änderungen können ohne X-Plane-Neustart übernommen werden über:

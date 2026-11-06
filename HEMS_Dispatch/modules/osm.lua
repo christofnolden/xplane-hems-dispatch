@@ -14,6 +14,11 @@ M.textures = {}
 M.pending = {}
 M.loaded_texture_count = 0
 M.warned_texture_limit = false
+M.texture_access_seq = 0
+M.texture_last_used = {}
+M.visible_texture_keys = {}
+M.texture_releaser = nil
+M.texture_releaser_error = nil
 M.last_download_launch = 0
 M.lfs = nil
 M.initialized = false
@@ -379,7 +384,7 @@ local function spawn_download_windows(url, part_path)
     local ok_win, win_err = init_windows_api()
     if not ok_win then return nil, win_err end
 
-    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.181 (X-Plane 12; FlyWithLua NG+)")
+    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.1.1 (X-Plane 12; FlyWithLua NG+)")
     local curl = tostring(cfg().curl_executable or "curl.exe")
     local args = {
         curl,
@@ -431,7 +436,7 @@ local function spawn_download_windows(url, part_path)
 end
 
 local function spawn_download_posix(url, part_path)
-    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.0.181 (X-Plane 12; FlyWithLua NG+)")
+    local user_agent = tostring(cfg().user_agent or "HEMS-Dispatch/1.1.1 (X-Plane 12; FlyWithLua NG+)")
     local curl = tostring(cfg().curl_executable or "curl")
     local args = table.concat({
         shell_quote(curl),
@@ -590,33 +595,123 @@ function M.prepare_tiles(tiles)
     end
 end
 
+-- FlyWithLua float_wnd_load_image() creates an OpenGL texture but exposes no
+-- per-image unload API. Discarding a Lua reference does NOT free GPU memory.
+-- Use the same OpenGL context as FlyWithLua's ImGui draw callback to retire
+-- off-screen textures. FlyWithLua will also delete its registered texture IDs
+-- on a full script reload; deleting an already deleted ID is harmless in GL.
+-- No tile file is removed: the existing persistent disk cache is preserved.
+local function init_texture_releaser()
+    if M.texture_releaser then return true end
+    if M.texture_releaser_error then return false end
+    local ok_ffi, ffi = pcall(require, "ffi")
+    if not ok_ffi then
+        M.texture_releaser_error = "LuaJIT FFI unavailable"
+        HEMS.log("Moving Map: GPU texture eviction unavailable: " .. M.texture_releaser_error)
+        return false
+    end
+    local ok_cdef, cdef_err = pcall(ffi.cdef, [[
+        void glDeleteTextures(int n, const unsigned int *textures);
+    ]])
+    if not ok_cdef and not tostring(cdef_err):find("redefine", 1, true) then
+        M.texture_releaser_error = tostring(cdef_err)
+        HEMS.log("Moving Map: GPU texture eviction unavailable: " .. M.texture_releaser_error)
+        return false
+    end
+    local library = SYSTEM == "IBM" and "opengl32"
+        or (SYSTEM == "APL" and "/System/Library/Frameworks/OpenGL.framework/OpenGL" or "GL")
+    local ok_lib, gl = pcall(ffi.load, library)
+    if not ok_lib then
+        M.texture_releaser_error = tostring(gl)
+        HEMS.log("Moving Map: GPU texture eviction unavailable: " .. M.texture_releaser_error)
+        return false
+    end
+    local ok_symbol, delete = pcall(function() return gl.glDeleteTextures end)
+    if not ok_symbol then
+        M.texture_releaser_error = tostring(delete)
+        HEMS.log("Moving Map: GPU texture eviction unavailable: " .. M.texture_releaser_error)
+        return false
+    end
+    M.texture_releaser = function(texture_id)
+        local ids = ffi.new("unsigned int[1]", tonumber(texture_id))
+        delete(1, ids)
+    end
+    return true
+end
+
+function M.set_visible_tiles(tiles)
+    -- Protect the complete current draw frame. Never discard a texture that is
+    -- needed by a later AddImage/AddImageQuad call in this same ImGui frame.
+    local protected = {}
+    for _, tile in ipairs(tiles or {}) do
+        protected[tile_key(tile.z, normalize_tile_x(tile.x, tile.z), tile.y)] = true
+    end
+    M.visible_texture_keys = protected
+end
+
+local function evict_offscreen_texture()
+    if not init_texture_releaser() then return false end
+    local oldest_key, oldest_seq = nil, math.huge
+    for key in pairs(M.textures) do
+        if not M.visible_texture_keys[key] then
+            local seq = M.texture_last_used[key] or 0
+            if seq < oldest_seq then
+                oldest_key, oldest_seq = key, seq
+            end
+        end
+    end
+    if not oldest_key then return false end
+    local texture = M.textures[oldest_key]
+    local ok, err = pcall(M.texture_releaser, texture)
+    if not ok then
+        M.texture_releaser_error = tostring(err)
+        M.texture_releaser = nil
+        HEMS.log("Moving Map: GPU texture eviction failed: " .. tostring(err))
+        return false
+    end
+    M.textures[oldest_key] = nil
+    M.texture_last_used[oldest_key] = nil
+    M.loaded_texture_count = M.loaded_texture_count - 1
+    return true
+end
+
 function M.texture_for(z, x, y)
     x = normalize_tile_x(x, z)
     if not valid_tile_y(y, z) then return nil end
     local key = tile_key(z, x, y)
-    if M.textures[key] ~= nil then return M.textures[key] end
+    M.texture_access_seq = M.texture_access_seq + 1
+    if M.textures[key] ~= nil then
+        M.texture_last_used[key] = M.texture_access_seq
+        return M.textures[key]
+    end
 
     local final_path = tile_paths(z, x, y, false)
     if not final_path or not HEMS.util.file_exists(final_path) or not is_png(final_path) then return nil end
 
-    local max_textures = tonumber(cfg().max_loaded_textures) or 384
-    if M.loaded_texture_count >= max_textures then
-        if not M.warned_texture_limit then
-            M.warned_texture_limit = true
-            HEMS.log(string.format(
-                "Moving Map: Texture limit (%d) reached. New OSM tiles will not be loaded into GPU memory until the next FlyWithLua reload.",
-                max_textures
-            ))
+    local max_textures = math.max(1, math.floor(tonumber(cfg().max_loaded_textures) or 384))
+    while M.loaded_texture_count >= max_textures do
+        if not evict_offscreen_texture() then
+            -- The on-screen tile set itself can exceed an unusually small
+            -- user-supplied budget, or the platform has no safe GL releaser.
+            if not M.warned_texture_limit then
+                M.warned_texture_limit = true
+                HEMS.log(string.format(
+                    "Moving Map: Texture budget (%d) reached; no evictable off-screen GPU tiles available.",
+                    max_textures
+                ))
+            end
+            return nil
         end
-        return nil
+        M.warned_texture_limit = false
     end
 
     local ok, texture_or_err = pcall(float_wnd_load_image, final_path)
-    if not ok then
+    if not ok or type(texture_or_err) ~= "number" then
         HEMS.log("Moving Map: OSM tile could not be loaded: " .. tostring(texture_or_err))
         return nil
     end
     M.textures[key] = texture_or_err
+    M.texture_last_used[key] = M.texture_access_seq
     M.loaded_texture_count = M.loaded_texture_count + 1
     return texture_or_err
 end
@@ -636,8 +731,11 @@ end
 
 function M.shutdown()
     M.cancel_pending()
+    -- FlyWithLua owns the remaining textures and releases them at script reload.
     M.textures = {}
     M.loaded_texture_count = 0
+    M.texture_last_used = {}
+    M.visible_texture_keys = {}
     M.warned_texture_limit = false
 end
 

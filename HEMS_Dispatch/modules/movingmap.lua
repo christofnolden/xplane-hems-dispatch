@@ -47,6 +47,12 @@ M.last_canvas_width = 0
 M.last_canvas_height = 0
 M.last_visible_tiles = {}
 M.warned_pan_unavailable = false
+-- Single in-map dialog state: confirmation, custom mission type selection, or
+-- a pending user map click. No mission scene work happens in the draw callback.
+M.dialog = nil
+M.custom_pick_type = nil
+M.custom_mouse_down = nil
+M.custom_mouse_moved = false
 M.gettime = os.clock
 
 local ok_socket, socket_mod = pcall(require, "socket")
@@ -816,6 +822,7 @@ local function prepare_map(width, height)
     local tiles, center_x, center_y = HEMS.osm.visible_tiles(
         center_lat, center_lon, M.zoom, coverage_width, coverage_height)
     M.last_visible_tiles = tiles
+    HEMS.osm.set_visible_tiles(tiles)
 
     local now = monotonic_seconds()
     local interval = tonumber(cfg().tile_prepare_interval_seconds) or 0.5
@@ -1017,10 +1024,137 @@ local function draw_status_overlay(canvas_x, canvas_y, width, height)
     imgui.TextUnformatted(details)
 end
 
+local function request_map_action(action, options)
+    local ok, err = HEMS.request_action(action, options or { show_info_on_success = false })
+    if not ok then
+        HEMS.status_message = "Moving Map action could not be queued: " .. tostring(err)
+        HEMS.log(HEMS.status_message)
+    end
+    return ok
+end
+
+local function start_custom_type_dialog()
+    M.custom_pick_type = nil
+    M.custom_mouse_down = nil
+    M.custom_mouse_moved = false
+    M.dialog = { kind = "type" }
+end
+
+local function toolbar_action(action)
+    if action == "reset_track" then
+        M.dialog = { kind = "confirm", action = action }
+    elseif action == "custom" then
+        if HEMS.active_mission then
+            M.dialog = { kind = "confirm", action = action }
+        else
+            start_custom_type_dialog()
+        end
+    elseif action == "random" or action == "end" then
+        if HEMS.active_mission then
+            M.dialog = { kind = "confirm", action = action }
+        elseif action == "random" then
+            M.dialog = nil
+            M.custom_pick_type = nil
+            request_map_action("new_mission", { show_info_on_success = false })
+        end
+    end
+end
+
+local function confirm_dialog_action(action)
+    M.dialog = nil
+    if action == "reset_track" then
+        M.reset_track()
+    elseif action == "random" then
+        M.custom_pick_type = nil
+        request_map_action("new_mission", { show_info_on_success = false })
+    elseif action == "end" then
+        M.custom_pick_type = nil
+        request_map_action("end_mission", { show_info_on_success = false })
+    elseif action == "custom" then
+        start_custom_type_dialog()
+    end
+end
+
+local function draw_map_dialog(canvas_x, canvas_y, width, height)
+    local dialog = M.dialog
+    if not dialog then return end
+    local panel_w = math.min(400, math.max(260, width - 24))
+    local panel_h = dialog.kind == "type" and 185 or 162
+    local px = canvas_x + (width - panel_w) * 0.5
+    local py = canvas_y + math.max(8, (height - panel_h) * 0.5)
+    imgui.DrawList_AddRectFilled(canvas_x, canvas_y, canvas_x + width, canvas_y + height, 0xB915181D, 0)
+    imgui.DrawList_AddRectFilled(px, py, px + panel_w, py + panel_h, 0xFF252A31, 7)
+    imgui.DrawList_AddRect(px, py, px + panel_w, py + panel_h, 0xFF515A64, 7)
+
+    if dialog.kind == "type" then
+        imgui.SetCursorScreenPos(px + 18, py + 13)
+        imgui.TextUnformatted("New custom mission")
+        imgui.SetCursorScreenPos(px + 18, py + 36)
+        imgui.TextUnformatted("Select the type of emergency:")
+        imgui.SetCursorScreenPos(px + 18, py + 63)
+        if draw_text_button("Medical emergency##hems_custom_medical", panel_w - 36, "primary") then
+            M.dialog = nil
+            M.custom_pick_type = "medical"
+            M.custom_mouse_down = nil
+        end
+        imgui.SetCursorScreenPos(px + 18, py + 97)
+        if draw_text_button("Traffic accident##hems_custom_accident", panel_w - 36, "primary") then
+            M.dialog = nil
+            M.custom_pick_type = "traffic_accident"
+            M.custom_mouse_down = nil
+        end
+        imgui.SetCursorScreenPos(px + 18, py + 144)
+        if draw_text_button("Cancel##hems_type_cancel", panel_w - 36, "normal") then
+            M.dialog = nil
+        end
+    else
+        local messages = {
+            reset_track = { "Reset flight track?", "Do you really want to delete the", "entire recorded flight track?" },
+            ["end"] = { "End active mission?", "Do you really want to end the", "current mission?" },
+            random = { "Replace active mission?", "End the current mission and", "generate a new random mission?" },
+            custom = { "Replace active mission?", "End the current mission and", "create a new custom mission?" },
+        }
+        local lines = messages[dialog.action] or { "Please confirm", "Continue with this action?", "" }
+        imgui.SetCursorScreenPos(px + 18, py + 18)
+        imgui.TextUnformatted(lines[1])
+        imgui.SetCursorScreenPos(px + 18, py + 52)
+        imgui.TextUnformatted(lines[2])
+        imgui.SetCursorScreenPos(px + 18, py + 72)
+        imgui.TextUnformatted(lines[3])
+        local bw = (panel_w - 48) * 0.5
+        imgui.SetCursorScreenPos(px + 18, py + 115)
+        if draw_text_button("Yes##hems_confirm_yes", bw, "danger") then
+            confirm_dialog_action(dialog.action)
+        end
+        imgui.SameLine()
+        if draw_text_button("No##hems_confirm_no", bw, "normal") then
+            M.dialog = nil
+        end
+    end
+end
+
+-- Shared zoom handling for toolbar buttons and bindable X-Plane commands.
+-- Keyboard/joystick zoom only affects an already open Moving Map.
+local function adjust_zoom(delta)
+    if not M.window then return false end
+    M.zoom = clamp(M.zoom + delta, tonumber(cfg().min_zoom) or 10, tonumber(cfg().max_zoom) or 16)
+    M.track_render_cache = nil
+    M.last_tile_prepare = -1000
+    return true
+end
+
+function M.zoom_in()
+    return adjust_zoom(1)
+end
+
+function M.zoom_out()
+    return adjust_zoom(-1)
+end
+
 local function draw_toolbar()
     local available_w = select(1, content_region_avail())
     local x, y = imgui.GetCursorScreenPos()
-    local two_rows = available_w < 575
+    local two_rows = available_w < 725
     local toolbar_h = two_rows and 68 or 38
     -- FlyWithLua's child canvas keeps a small internal right-side inset even
     -- when its scrollbars are visually hidden. Match that visible canvas width
@@ -1033,16 +1167,11 @@ local function draw_toolbar()
 
     imgui.SetCursorScreenPos(x + 6, y + 5)
     if draw_icon_button("zoom_out", "minus", "Zoom out", false) then
-        local min_zoom = tonumber(cfg().min_zoom) or 10
-        M.zoom = clamp(M.zoom - 1, min_zoom, tonumber(cfg().max_zoom) or 16)
-        M.track_render_cache = nil
-        M.last_tile_prepare = -1000
+        M.zoom_out()
     end
     imgui.SameLine()
     if draw_icon_button("zoom_in", "plus", "Zoom in", false) then
-        M.zoom = clamp(M.zoom + 1, tonumber(cfg().min_zoom) or 10, tonumber(cfg().max_zoom) or 16)
-        M.track_render_cache = nil
-        M.last_tile_prepare = -1000
+        M.zoom_in()
     end
     imgui.SameLine()
     if draw_icon_button(
@@ -1062,7 +1191,7 @@ local function draw_toolbar()
     end
     imgui.SameLine()
     if draw_icon_button("track_reset", "reset", "Reset flight track", false) then
-        M.reset_track()
+        toolbar_action("reset_track")
     end
     imgui.SameLine()
     local base_tooltip
@@ -1108,14 +1237,16 @@ local function draw_toolbar()
         imgui.SameLine()
     end
 
-    if draw_text_button("New mission", 104, "primary") then
-        local ok, err = HEMS.request_action("new_mission", { show_info_on_success = false })
-        if not ok and err then HEMS.log("Moving Map: " .. tostring(err)) end
+    if draw_text_button("New random mission", 136, "primary") then
+        toolbar_action("random")
     end
     imgui.SameLine()
-    if draw_text_button("End mission", 112, "danger") then
-        local ok, err = HEMS.request_action("end_mission", { show_info_on_success = false })
-        if not ok and err then HEMS.log("Moving Map: " .. tostring(err)) end
+    if draw_text_button("New custom mission", 142, "primary") then
+        toolbar_action("custom")
+    end
+    imgui.SameLine()
+    if draw_text_button("End mission", 100, "danger") then
+        toolbar_action("end")
     end
 
     -- Explicitly advance to the end of the toolbar panel. This prevents hidden
@@ -1124,6 +1255,7 @@ local function draw_toolbar()
 end
 
 local function handle_map_pan()
+    if M.dialog then return end
     if not imgui.IsWindowHovered or not imgui.IsMouseDragging or not imgui.GetMouseDragDelta then
         if not M.warned_pan_unavailable then
             M.warned_pan_unavailable = true
@@ -1137,6 +1269,7 @@ local function handle_map_pan()
     local d1, d2 = imgui.GetMouseDragDelta(0)
     local dx, dy = unpack_vec2(d1, d2)
     if math.abs(dx) < 0.01 and math.abs(dy) < 0.01 then return end
+    if M.custom_pick_type then M.custom_mouse_moved = true end
 
     local center_lat, center_lon = current_map_center()
     if not center_lat or not center_lon then return end
@@ -1279,6 +1412,81 @@ local function draw_heading_prediction(center_world_x, center_world_y, canvas_x,
     end
 end
 
+-- Mouse-to-geographic conversion reverses the Heading-Up rotation before
+-- using the same OSM Web Mercator transform as normal map rendering.
+local function map_click_to_latlon(mouse_x, mouse_y, center_world_x, center_world_y,
+                                    canvas_x, canvas_y, width, height)
+    local screen_dx = mouse_x - (canvas_x + width * 0.5)
+    local screen_dy = mouse_y - (canvas_y + height * 0.5)
+    local dx = screen_dx * M.map_rotation_cos - screen_dy * M.map_rotation_sin
+    local dy = screen_dx * M.map_rotation_sin + screen_dy * M.map_rotation_cos
+    local lat, lon = HEMS.osm.world_px_to_latlon(center_world_x + dx, center_world_y + dy, M.zoom)
+    if lon then lon = ((lon + 180) % 360) - 180 end
+    return lat, lon
+end
+
+local function handle_custom_map_click(canvas_x, canvas_y, width, height, center_world_x, center_world_y)
+    if not M.custom_pick_type or M.dialog then return end
+    if not (imgui.IsMouseClicked and imgui.IsMouseReleased and imgui.GetMousePos) then
+        M.custom_pick_type = nil
+        HEMS.status_message = "Custom mission selection requires FlyWithLua mouse click/release support."
+        HEMS.log("Moving Map: " .. HEMS.status_message)
+        return
+    end
+    local mx, my = unpack_vec2(imgui.GetMousePos())
+    local inside = point_in_rect(mx, my, canvas_x, canvas_y, canvas_x + width, canvas_y + height)
+    -- Do not treat clicks on the selection banner, attribution, or mission
+    -- status badge as map positions.
+    local inside_prompt = point_in_rect(mx, my, canvas_x + 8, canvas_y + 8,
+        canvas_x + math.min(width - 8, 408), canvas_y + 83)
+    local inside_status = my >= canvas_y + height - 64
+    local inside_attribution = my < canvas_y + 32 and mx > canvas_x + width - 230
+    if imgui.IsMouseClicked(0) then
+        M.custom_mouse_down = (inside and not inside_prompt and not inside_status and not inside_attribution
+            and imgui.IsWindowHovered and imgui.IsWindowHovered()) and { x = mx, y = my } or nil
+        M.custom_mouse_moved = false
+    end
+    if imgui.IsMouseReleased(0) then
+        local press = M.custom_mouse_down
+        M.custom_mouse_down = nil
+        if press and inside and not inside_prompt and not inside_status and not inside_attribution
+            and not M.custom_mouse_moved
+            and math.abs(mx - press.x) <= 5 and math.abs(my - press.y) <= 5 then
+            local lat, lon = map_click_to_latlon(mx, my, center_world_x, center_world_y,
+                canvas_x, canvas_y, width, height)
+            if lat and lon and lat == lat and lon == lon then
+                local mission_id = M.custom_pick_type
+                if request_map_action("custom_mission", {
+                    mission_id = mission_id, lat = lat, lon = lon, show_info_on_success = false
+                }) then
+                    M.custom_pick_type = nil
+                    HEMS.log(string.format("Custom mission map click: %s at %.6f/%.6f.", mission_id, lat, lon))
+                end
+            end
+        end
+        M.custom_mouse_moved = false
+    end
+end
+
+local function draw_custom_map_prompt(canvas_x, canvas_y, width)
+    if not M.custom_pick_type then return end
+    local bw = math.min(width - 16, 400)
+    local x, y = canvas_x + 8, canvas_y + 8
+    imgui.DrawList_AddRectFilled(x, y, x + bw, y + 75, 0xE51B232C, 6)
+    imgui.DrawList_AddRect(x, y, x + bw, y + 75, 0xFF697584, 6)
+    imgui.SetCursorScreenPos(x + 9, y + 7)
+    imgui.TextUnformatted("Click on the map to set the position")
+    imgui.SetCursorScreenPos(x + 9, y + 25)
+    imgui.TextUnformatted(M.custom_pick_type == "traffic_accident"
+        and "for your custom traffic accident." or "for your custom medical emergency.")
+    imgui.SetCursorScreenPos(x + 9, y + 47)
+    if draw_text_button("Cancel selection##hems_cancel_pick", 148, "normal") then
+        M.custom_pick_type = nil
+        M.custom_mouse_down = nil
+        M.custom_mouse_moved = false
+    end
+end
+
 local function draw_map_canvas(width, height)
     local hidden_scrollbars = push_hidden_scrollbar_colors()
     imgui.BeginChild("##hems_moving_map_canvas", width, height)
@@ -1302,12 +1510,16 @@ local function draw_map_canvas(width, height)
     if not M.nav.valid then
         imgui.SetCursorScreenPos(canvas_x + 12, canvas_y + 12)
         imgui.TextUnformatted("Aircraft position unavailable.")
+        -- Even without valid navigation data, keep confirmations and the
+        -- custom-type dialog accessible (e.g. ending an active mission).
+        draw_map_dialog(canvas_x, canvas_y, width, height)
         imgui.EndChild()
         pop_style_colors(hidden_scrollbars)
         return
     end
 
     local tiles, center_world_x, center_world_y, coverage = prepare_map(width, height)
+    handle_custom_map_click(canvas_x, canvas_y, width, height, center_world_x, center_world_y)
     local map_drawn = draw_tiles(canvas_x, canvas_y, width, height, tiles, coverage)
 
     if not map_drawn then
@@ -1392,6 +1604,8 @@ local function draw_map_canvas(width, height)
     imgui.TextUnformatted(attribution)
 
     draw_status_overlay(canvas_x, canvas_y, width, height)
+    draw_custom_map_prompt(canvas_x, canvas_y, width)
+    draw_map_dialog(canvas_x, canvas_y, width, height)
 
     imgui.EndChild()
     pop_style_colors(hidden_scrollbars)
@@ -1417,8 +1631,28 @@ function M.build_window(wnd, x, y)
     draw_map_canvas(width, height)
 end
 
+-- Center a completed random/custom mission for landing-site reconnaissance.
+-- Never called for a failed mission. The pilot can restore Follow Aircraft with
+-- the existing toolbar button. All Direct-To routes and aircraft data stay live.
+function M.focus_on_mission(mission)
+    local lat = mission and tonumber(mission.lat)
+    local lon = mission and tonumber(mission.lon)
+    if not lat or not lon or lat ~= lat or lon ~= lon then return false end
+    M.follow_aircraft = false
+    M.map_center_lat, M.map_center_lon = lat, lon
+    M.zoom = clamp(tonumber(cfg().mission_preview_zoom) or 16,
+        tonumber(cfg().min_zoom) or 10, tonumber(cfg().max_zoom) or 16)
+    M.track_render_cache = nil
+    M.last_tile_prepare = -1000
+    HEMS.log(string.format("Moving Map: Centered on mission %.6f/%.6f at zoom %d.", lat, lon, M.zoom))
+    return true
+end
+
 function M.on_close(wnd)
     M.window = nil
+    M.dialog = nil
+    M.custom_pick_type = nil
+    M.custom_mouse_down = nil
 end
 
 HEMS_DISPATCH_BUILD_MOVING_MAP = function(wnd, x, y) M.build_window(wnd, x, y) end
@@ -1472,6 +1706,9 @@ function M.hide()
         return false, err
     end
     M.window = nil
+    M.dialog = nil
+    M.custom_pick_type = nil
+    M.custom_mouse_down = nil
     return true
 end
 

@@ -1,4 +1,4 @@
--- HEMS Dispatch v1.0.181 configuration
+-- HEMS Dispatch v1.1.2 configuration
 -- This file can be reloaded from Plugins > HEMS Dispatch > Reload configuration.
 
 return {
@@ -10,6 +10,9 @@ return {
         -- equally wide distance ranges have the same base probability.
         -- HEMS Dispatch then looks for a suitable SimHeaven road around that target.
         road_search_radius_km = 7.0,
+        -- Custom map-click missions search for a suitable road near the click.
+        -- This distance is independent of min_radius_km / max_radius_km.
+        custom_road_search_radius_km = 1.0,
         max_target_attempts = 15,
 
         -- Candidate points are sampled from the SimHeaven road centreline.
@@ -22,7 +25,7 @@ return {
         scene_path_resolution_m = 2.0,
 
         -- Reject very steep/wet terrain after the SimHeaven road selection.
-        max_slope_deg = 12.0,
+        max_slope_deg = 15.0,
 
         -- Highway and single-lane incidents are currently disabled.
         allow_highway_incidents = false,
@@ -110,6 +113,9 @@ return {
         min_zoom = 10,
         max_zoom = 16,
         default_zoom = 14,
+        -- After successful random/custom mission generation, center on the
+        -- scene for landing-zone inspection and temporarily disable Follow.
+        mission_preview_zoom = 12,
 
         -- Navigation geometry is updated at 10 Hz; ETA/text at 1 Hz. The ImGui
         -- window itself is rendered by FlyWithLua every frame, but these calculations
@@ -132,7 +138,7 @@ return {
 
         -- OpenStreetMap standard tile server. Keep attribution visible in the map.
         tile_url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        user_agent = "HEMS-Dispatch/1.0.181 (X-Plane 12; FlyWithLua NG+)",
+        user_agent = "HEMS-Dispatch/1.1.1 (X-Plane 12; FlyWithLua NG+)",
 
         -- curl is included with current Windows versions and commonly available on
         -- macOS/Linux. Downloads run asynchronously so X-Plane is not blocked.
@@ -142,8 +148,9 @@ return {
         max_concurrent_downloads = 4,
         download_launch_gap_seconds = 0.0,
 
-        -- FlyWithLua owns loaded image textures and has no per-texture unload call.
-        -- This limit prevents unbounded GPU-memory growth during very long sessions.
+        -- Maximum simultaneously resident OSM GPU textures. Off-screen textures
+        -- are released using OpenGL and reloaded from the disk cache on demand.
+        -- This is a rolling GPU budget, NOT a lifetime loading limit.
         max_loaded_textures = 384,
     },
 
@@ -155,7 +162,7 @@ return {
 
         -- Public OpenStreetMap Overpass API endpoint used for hospital POIs.
         overpass_url = "https://overpass-api.de/api/interpreter",
-        user_agent = "HEMS-Dispatch/1.0.181 (X-Plane 12; FlyWithLua NG+)",
+        user_agent = "HEMS-Dispatch/1.1.1 (X-Plane 12; FlyWithLua NG+)",
 
         curl_executable = (SYSTEM == "IBM") and "curl.exe" or "curl",
         connect_timeout_seconds = 5,

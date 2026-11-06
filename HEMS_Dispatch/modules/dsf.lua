@@ -95,6 +95,12 @@ local function road_subtype_supported_for_cache(subtype)
 end
 
 local function road_group_matches(subtype, group)
+    if type(group) == "table" then
+        for _, allowed in ipairs(group) do
+            if road_group_matches(subtype, allowed) then return true end
+        end
+        return false
+    end
     if group == "primary" then return subtype >= 10 and subtype <= 28 end
     if group == "secondary" then return subtype >= 30 and subtype <= 49 end
     if group == "local" then return subtype >= 50 and subtype <= 69 end
@@ -811,7 +817,13 @@ local function decode_candidate(chunk, pos)
     }
 end
 
-function M.select_candidates(cache_path, target_lat, target_lon, heli_lat, heli_lon, road_group, limit)
+function M.select_candidates(cache_path, target_lat, target_lon, heli_lat, heli_lon, road_group, limit, options)
+    -- Custom missions select the closest road samples to the map click and do
+    -- not apply the aircraft-centered random-dispatch distance constraints.
+    -- Existing random missions use exactly the original reservoir sampler.
+    options = type(options) == "table" and options or {}
+    local nearest_first = options.nearest_first == true
+    local ignore_dispatch_radius = options.ignore_dispatch_radius == true
     limit = math.max(1, tonumber(limit) or 16)
     local f, err = io.open(cache_path, "rb")
     if not f then return nil, err end
@@ -822,7 +834,8 @@ function M.select_candidates(cache_path, target_lat, target_lon, heli_lat, heli_
         return nil, "Invalid HRI-v2 header."
     end
 
-    local search_r2 = HEMS.config.dispatch.road_search_radius_km ^ 2
+    local search_radius = tonumber(options.search_radius_km) or HEMS.config.dispatch.road_search_radius_km
+    local search_r2 = search_radius ^ 2
     local min_r2 = HEMS.config.dispatch.min_radius_km ^ 2
     local max_r2 = HEMS.config.dispatch.max_radius_km ^ 2
     local selected = {}
@@ -848,17 +861,35 @@ function M.select_candidates(cache_path, target_lat, target_lon, heli_lat, heli_
 
                 if target_d2 <= search_r2 then
                     local heli_d2 = HEMS.geo.distance_sq_km_approx(heli_lat, heli_lon, lat, lon)
-                    if heli_d2 >= min_r2 and heli_d2 <= max_r2 then
+                    if ignore_dispatch_radius or (heli_d2 >= min_r2 and heli_d2 <= max_r2) then
                         matching = matching + 1
-                        local candidate = nil
-                        if #selected < limit then
-                            candidate = decode_candidate(chunk, pos)
-                            selected[#selected + 1] = candidate
+                        if nearest_first then
+                            -- Bounded nearest-N selection; O(N * limit) with
+                            -- only a few dozen records kept in memory.
+                            local insert_at = #selected + 1
+                            for j = 1, #selected do
+                                if target_d2 < selected[j]._distance_sq_km then
+                                    insert_at = j
+                                    break
+                                end
+                            end
+                            if insert_at <= limit then
+                                local candidate = decode_candidate(chunk, pos)
+                                candidate._distance_sq_km = target_d2
+                                table.insert(selected, insert_at, candidate)
+                                if #selected > limit then table.remove(selected) end
+                            end
                         else
-                            local replace = math.random(matching)
-                            if replace <= limit then
+                            local candidate = nil
+                            if #selected < limit then
                                 candidate = decode_candidate(chunk, pos)
-                                selected[replace] = candidate
+                                selected[#selected + 1] = candidate
+                            else
+                                local replace = math.random(matching)
+                                if replace <= limit then
+                                    candidate = decode_candidate(chunk, pos)
+                                    selected[replace] = candidate
+                                end
                             end
                         end
                     end
@@ -869,9 +900,11 @@ function M.select_candidates(cache_path, target_lat, target_lon, heli_lat, heli_
     end
     f:close()
 
-    for i = #selected, 2, -1 do
-        local j = math.random(i)
-        selected[i], selected[j] = selected[j], selected[i]
+    if not nearest_first then
+        for i = #selected, 2, -1 do
+            local j = math.random(i)
+            selected[i], selected[j] = selected[j], selected[i]
+        end
     end
 
     return selected, matching

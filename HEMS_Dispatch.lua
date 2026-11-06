@@ -1,11 +1,11 @@
 -- HEMS Dispatch for X-Plane 12 / FlyWithLua NG+
--- Version 1.0.181
+-- Version 1.1.2
 --
 -- Install this file and the HEMS_Dispatch directory directly into:
 --   X-Plane 12/Resources/plugins/FlyWithLua/Scripts/
 
 HEMS = HEMS or {}
-HEMS.VERSION = "1.0.181"
+HEMS.VERSION = "1.1.2"
 HEMS.NAME = "HEMS Dispatch"
 HEMS.active_mission = nil
 HEMS.status_message = "Initializing HEMS Dispatch ..."
@@ -108,7 +108,7 @@ end
 
 
 function HEMS.request_action(action, options)
-    if action ~= "new_mission" and action ~= "end_mission" then
+    if action ~= "new_mission" and action ~= "end_mission" and action ~= "custom_mission" then
         return false, "Unknown action: " .. tostring(action)
     end
     if HEMS.pending_action ~= nil then
@@ -138,6 +138,13 @@ function HEMS.process_pending_action()
 
     if action == "new_mission" then
         HEMS.command_new_mission(options)
+    elseif action == "custom_mission" then
+        local ok, err = pcall(HEMS.mission.new_custom_mission, options)
+        if not ok then
+            HEMS.status_message = "Custom mission generation failed: " .. tostring(err)
+            HEMS.log("ERROR custom_mission: " .. tostring(err))
+            HEMS.ui.show_info()
+        end
     elseif action == "end_mission" then
         HEMS.command_end_mission(options)
     end
@@ -158,6 +165,14 @@ function HEMS.command_toggle_moving_map()
         HEMS.log("ERROR toggle_moving_map: " .. tostring(err or "unknown error"))
         HEMS.ui.show_info()
     end
+end
+
+function HEMS.command_map_zoom_in()
+    HEMS.movingmap.zoom_in()
+end
+
+function HEMS.command_map_zoom_out()
+    HEMS.movingmap.zoom_out()
 end
 
 function HEMS.command_set_base_position()
@@ -234,6 +249,8 @@ local function bootstrap()
     create_command("hems_dispatch/end_mission", "HEMS Dispatch - End active mission", "HEMS.command_end_mission()", "", "")
     create_command("hems_dispatch/show_info", "HEMS Dispatch - Show active mission information", "HEMS.command_show_info()", "", "")
     create_command("hems_dispatch/toggle_moving_map", "HEMS Dispatch - Toggle Moving Map", "HEMS.command_toggle_moving_map()", "", "")
+    create_command("hems_dispatch/map_zoom_in", "HEMS Dispatch - Moving Map zoom in", "HEMS.command_map_zoom_in()", "", "")
+    create_command("hems_dispatch/map_zoom_out", "HEMS Dispatch - Moving Map zoom out", "HEMS.command_map_zoom_out()", "", "")
     create_command("hems_dispatch/set_base_position", "HEMS Dispatch - Set Base Position", "HEMS.command_set_base_position()", "", "")
     create_command("hems_dispatch/reload_config", "HEMS Dispatch - Reload configuration", "HEMS.command_reload_config()", "", "")
 
