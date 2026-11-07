@@ -10,7 +10,7 @@ local DEG = math.pi / 180
 local UINT32_RANGE = 4294967296.0
 local UINT32_MAX = 4294967295.0
 
-local HRI_MAGIC = "HEMSHRI 2"
+local HRI_MAGIC = "HEMSHRI 3"
 local HRI_RECORD_SIZE = 20
 local HRI_CHAIN_HEADER_SIZE = 20
 local HRI_BUFFER_RECORDS = 2048
@@ -87,53 +87,27 @@ local function string_table(data, atom)
     return result
 end
 
+-- All road subtype handling is centralized in road_profiles.lua.
+local function active_road_profile()
+    return HEMS.road_profile or HEMS.road_profiles.profiles.standard
+end
+
 local function road_subtype_supported_for_cache(subtype)
-    return (subtype >= 10 and subtype <= 71)
-        or subtype == 100
-        or subtype == 110
-        or subtype == 120
+    return HEMS.road_profiles.supports(active_road_profile(), subtype)
 end
 
 local function road_group_matches(subtype, group)
-    if type(group) == "table" then
-        for _, allowed in ipairs(group) do
-            if road_group_matches(subtype, allowed) then return true end
-        end
-        return false
-    end
-    if group == "primary" then return subtype >= 10 and subtype <= 28 end
-    if group == "secondary" then return subtype >= 30 and subtype <= 49 end
-    if group == "local" then return subtype >= 50 and subtype <= 69 end
-    if group == "single" then return subtype == 70 or subtype == 71 end
-    if group == "highway" then return subtype == 100 or subtype == 110 or subtype == 120 end
-    return false
+    return HEMS.road_profiles.group_matches(
+        active_road_profile(), subtype, group, HEMS.config and HEMS.config.dispatch
+    )
 end
 
 local function road_group_id(subtype)
-    if subtype >= 10 and subtype <= 28 then return 1 end
-    if subtype >= 30 and subtype <= 49 then return 2 end
-    if subtype >= 50 and subtype <= 69 then return 3 end
-    if subtype == 70 or subtype == 71 then return 4 end
-    if subtype == 100 or subtype == 110 or subtype == 120 then return 5 end
-    return 0
+    return HEMS.road_profiles.group_id(active_road_profile(), subtype)
 end
 
 local function subtype_flags(subtype)
-    local oneway = (subtype >= 20 and subtype <= 28)
-        or (subtype >= 40 and subtype <= 49)
-        or (subtype >= 60 and subtype <= 69)
-        or subtype == 71
-        or subtype == 100
-        or subtype == 110
-        or subtype == 120
-    local highway = subtype == 100 or subtype == 110 or subtype == 120
-    local single = subtype == 70 or subtype == 71
-
-    local flags = 0
-    if oneway then flags = flags + 1 end
-    if highway then flags = flags + 2 end
-    if single then flags = flags + 4 end
-    return flags
+    return HEMS.road_profiles.flags(active_road_profile(), subtype)
 end
 
 local function flag_is_oneway(flags)
@@ -515,6 +489,7 @@ local function read_hri_header(f)
         source = f:read("*l"),
         tile = f:read("*l"),
         spacing = f:read("*l"),
+        profile = f:read("*l"),
         candidates = f:read("*l"),
         chains = f:read("*l"),
         data = f:read("*l"),
@@ -528,7 +503,8 @@ local function read_hri_header(f)
 end
 
 function M.build_cache(source_dsf, cache_path, tile_name, spacing_m)
-    HEMS.log("Baue HRI-v2-Road-Cache aus " .. source_dsf)
+    HEMS.log("Building HRI-v3 road cache from " .. source_dsf
+        .. " (profile=" .. HEMS.road_profiles.cache_tag(active_road_profile()) .. ")")
     local started = os.clock()
 
     local data, read_err = HEMS.util.read_all(source_dsf)
@@ -694,6 +670,7 @@ function M.build_cache(source_dsf, cache_path, tile_name, spacing_m)
     out:write("SOURCE ", signature, "\n")
     out:write("TILE ", tile_name, "\n")
     out:write("SPACING ", tostring(spacing_m), "\n")
+    out:write("PROFILE ", HEMS.road_profiles.cache_tag(active_road_profile()), "\n")
     out:write("CANDIDATES ", tostring(candidate_writer.records), "\n")
     out:write("CHAINS ", tostring(graph_writer.chains), "\n")
     out:write("DATA\n")
@@ -720,7 +697,7 @@ function M.build_cache(source_dsf, cache_path, tile_name, spacing_m)
 
     local elapsed = os.clock() - started
     HEMS.log(string.format(
-        "HRI-v2 cache %s complete: %d candidates, %d road chains, %.2f s CPU time.",
+        "HRI-v3 cache %s complete: %d candidates, %d road chains, %.2f s CPU time.",
         tile_name, candidate_writer.records, graph_writer.chains, elapsed
     ))
 
@@ -747,6 +724,7 @@ function M.cache_is_valid(cache_path, source_dsf, spacing_m)
     if not expected_sig then return false end
     if h.source ~= "SOURCE " .. expected_sig then return false end
     if h.spacing ~= "SPACING " .. tostring(spacing_m) then return false end
+    if h.profile ~= "PROFILE " .. HEMS.road_profiles.cache_tag(active_road_profile()) then return false end
     return true
 end
 
@@ -836,7 +814,7 @@ function M.select_candidates(cache_path, target_lat, target_lon, heli_lat, heli_
     local h = read_hri_header(f)
     if not h or h.magic ~= HRI_MAGIC or h.data ~= "DATA" then
         f:close()
-        return nil, "Invalid HRI-v2 header."
+        return nil, "Invalid HRI-v3 header."
     end
 
     local search_radius = tonumber(options.search_radius_km) or HEMS.config.dispatch.road_search_radius_km
@@ -853,7 +831,7 @@ function M.select_candidates(cache_path, target_lat, target_lon, heli_lat, heli_
         local chunk = f:read(records * HRI_RECORD_SIZE)
         if not chunk or #chunk < records * HRI_RECORD_SIZE then
             f:close()
-            return nil, "HRI-v2-Candidatebereich ist abgeschnitten."
+            return nil, "HRI-v3-Candidatebereich ist abgeschnitten."
         end
 
         for rec = 0, records - 1 do
@@ -932,7 +910,7 @@ local function load_graph_index(cache_path)
     local h = read_hri_header(f)
     if not h or h.magic ~= HRI_MAGIC or h.data ~= "DATA" then
         f:close()
-        return nil, "Invalid HRI-v2 header."
+        return nil, "Invalid HRI-v3 header."
     end
 
     local chain_count = h.chain_count
@@ -959,7 +937,7 @@ local function load_graph_index(cache_path)
         local raw = f:read(HRI_CHAIN_HEADER_SIZE)
         if not raw or #raw ~= HRI_CHAIN_HEADER_SIZE then
             f:close()
-            return nil, "HRI-v2-Graphheader ist abgeschnitten."
+            return nil, "HRI-v3-Graphheader ist abgeschnitten."
         end
         graph.subtype[i] = raw:byte(1)
         graph.flags[i] = raw:byte(2)
@@ -995,7 +973,7 @@ local function load_chain(graph, chain_id)
     f:seek("set", tonumber(graph.points_offset[i]))
     local raw = f:read(count * 8)
     f:close()
-    if not raw or #raw ~= count * 8 then return nil, "HRI-v2-Road-Chain ist abgeschnitten." end
+    if not raw or #raw ~= count * 8 then return nil, "HRI-v3-Road-Chain ist abgeschnitten." end
 
     local lat = ffi.new("double[?]", count)
     local lon = ffi.new("double[?]", count)
@@ -1418,12 +1396,7 @@ function M.path_point(path, signed_distance_m, scene_direction)
 end
 
 function M.road_group_name(subtype)
-    if subtype >= 10 and subtype <= 28 then return "Primary" end
-    if subtype >= 30 and subtype <= 49 then return "Secondary" end
-    if subtype >= 50 and subtype <= 69 then return "Local" end
-    if subtype == 70 or subtype == 71 then return "Single Lane" end
-    if subtype == 100 or subtype == 110 or subtype == 120 then return "Highway" end
-    return "Unknown"
+    return HEMS.road_profiles.group_name(active_road_profile(), subtype)
 end
 
 return M

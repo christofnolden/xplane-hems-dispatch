@@ -1,11 +1,11 @@
 -- HEMS Dispatch for X-Plane 12 / FlyWithLua NG+
--- Version 1.1.3
+-- Version 1.1.4
 --
 -- Install this file and the HEMS_Dispatch directory directly into:
 --   X-Plane 12/Resources/plugins/FlyWithLua/Scripts/
 
 HEMS = HEMS or {}
-HEMS.VERSION = "1.1.3"
+HEMS.VERSION = "1.1.4"
 HEMS.NAME = "HEMS Dispatch"
 HEMS.active_mission = nil
 HEMS.status_message = "Initializing HEMS Dispatch ..."
@@ -52,6 +52,7 @@ end
 HEMS.util = load_module("util")
 HEMS.geo = load_module("geo")
 HEMS.xplm = load_module("xplm")
+HEMS.road_profiles = load_module("road_profiles")
 HEMS.dsf = load_module("dsf")
 HEMS.rescuex = load_module("rescuex")
 HEMS.osm = load_module("osm")
@@ -78,19 +79,28 @@ function HEMS.load_config()
         return false, tostring(validation_error)
     end
 
-    -- Resolve the road scenery on every config load so "Reload configuration"
-    -- can also switch between X-World Europe and X-World Pro Europe.
-    local folder_name = cfg_or_error.simheaven and cfg_or_error.simheaven.road_scenery_folder
+    -- Resolve the edition-specific road profile and its scenery folder as one
+    -- transaction. Existing folder-only configurations are still supported.
+    local sim_cfg = cfg_or_error.simheaven or {}
+    local profile, folder_name, profile_err = HEMS.road_profiles.resolve(
+        sim_cfg.edition, sim_cfg.road_scenery_folder
+    )
+    if not profile then
+        HEMS.log("ERROR resolving SimHeaven road profile: " .. tostring(profile_err))
+        return false, tostring(profile_err)
+    end
     local simheaven_root, detect_err = HEMS.dsf.detect_simheaven_root(SYSTEM_DIRECTORY, folder_name)
     if not simheaven_root then
         HEMS.log("ERROR resolving SimHeaven roads: " .. tostring(detect_err))
         return false, tostring(detect_err)
     end
 
-    -- Commit config and source path together only after both checks pass.
+    -- Commit config, profile and source path together only after all checks pass.
     HEMS.config = cfg_or_error
+    HEMS.road_profile = profile
     HEMS.paths.simheaven = simheaven_root
-    HEMS.log("Configuration loaded. SimHeaven roads: " .. simheaven_root)
+    HEMS.log(string.format("Configuration loaded. SimHeaven edition=%s, road profile=%s, roads=%s",
+        profile.edition, HEMS.road_profiles.cache_tag(profile), simheaven_root))
     return true
 end
 

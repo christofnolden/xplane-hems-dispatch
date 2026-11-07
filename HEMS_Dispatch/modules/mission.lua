@@ -2,6 +2,7 @@ local M = {}
 
 local floor = math.floor
 local CANDIDATE_SAMPLE_LIMIT = 24
+local VALID_ROAD_GROUPS = { primary = true, secondary = true, ["local"] = true, single = true, highway = true }
 
 local UNIT_LABELS = {
     RTW = "Ambulance",
@@ -36,9 +37,13 @@ function M.validate_config(cfg)
         if type(cfg.simheaven) ~= "table" then
             return false, "simheaven must be a table."
         end
+        local edition = cfg.simheaven.edition
+        if edition ~= nil and edition ~= "standard" and edition ~= "pro" then
+            return false, "simheaven.edition must be 'standard' or 'pro'."
+        end
         local folder = cfg.simheaven.road_scenery_folder
-        if type(folder) ~= "string" or folder == "" or folder:match("^%s")
-            or folder:match("%s$") or folder:find("[/\\]") or folder == "." or folder == ".." then
+        if folder ~= nil and (type(folder) ~= "string" or folder == "" or folder:match("^%s")
+            or folder:match("%s$") or folder:find("[/\\]") or folder == "." or folder == "..") then
             return false, "simheaven.road_scenery_folder must be one folder name (without path separators)."
         end
     end
@@ -81,6 +86,11 @@ function M.validate_config(cfg)
         probability_sum = probability_sum + p
         if type(mission.road_groups) ~= "table" or #mission.road_groups == 0 then
             return false, "Mission " .. mission.id .. " has no road_groups."
+        end
+        for _, group in ipairs(mission.road_groups) do
+            if type(group) ~= "table" or not VALID_ROAD_GROUPS[group.id] then
+                return false, "Mission " .. mission.id .. " contains an unknown road group."
+            end
         end
         if type(mission.units) ~= "table" then
             return false, "Mission " .. mission.id .. " has no units table."
@@ -287,7 +297,9 @@ local function try_candidate(mission_def, plan, road_group, cache, tile_name, ca
 
     local available_positive, available_negative = HEMS.dsf.path_availability(road_path, layout.scene_direction)
     HEMS.log(string.format(
-        "Road candidate suitable: Chain=%d | Along=%.1f m | Road path forward=%.1f m / backward=%.1f m | SceneDirection=%d",
+        "Road candidate suitable: Subtype=%d (%s) | Chain=%d | Along=%.1f m | Road path forward=%.1f m / backward=%.1f m | SceneDirection=%d",
+        candidate.subtype or 0,
+        HEMS.dsf.road_group_name(candidate.subtype),
         candidate.chain_id or 0,
         candidate.along_m or 0.0,
         available_positive,

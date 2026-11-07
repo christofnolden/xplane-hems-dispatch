@@ -1,13 +1,16 @@
--- HEMS Dispatch v1.1.3 configuration
+-- HEMS Dispatch v1.1.4 configuration
 -- This file can be reloaded from Plugins > HEMS Dispatch > Reload configuration.
 
 return {
     simheaven = {
-        -- Enter the exact folder name of the enabled SimHeaven road scenery
-        -- in X-Plane 12/Custom Scenery (no full path or trailing slash).
-        -- X-World Europe:     simHeaven_X-World_Europe-8-network
-        -- X-World Pro Europe: simHeaven_X-WORLD-Pro_Europe-13-net3-roads
-        road_scenery_folder = "simHeaven_X-World_Europe-8-network",
+        -- Select the road network edition; subtype mappings change automatically.
+        -- "standard" = X-World Europe (original road groups)
+        -- "pro"      = X-World Pro Europe (incl. residential/entrance roads)
+        edition = "standard",
+
+        -- Optional override for a nonstandard scenery folder name. By default,
+        -- the folder is selected from edition and must be enabled in scenery_packs.ini.
+        -- road_scenery_folder = "simHeaven_X-World_Europe-8-network",
     },
 
     dispatch = {
@@ -35,7 +38,8 @@ return {
         -- Reject very steep/wet terrain after the SimHeaven road selection.
         max_slope_deg = 15.0,
 
-        -- Highway and single-lane incidents are currently disabled.
+        -- Opt-in for mission road_groups "highway" and "single"; excluded by default.
+        -- Only relevant when those groups are included in a mission definition.
         allow_highway_incidents = false,
         allow_single_lane_incidents = false,
     },
@@ -146,7 +150,7 @@ return {
 
         -- OpenStreetMap standard tile server. Keep attribution visible in the map.
         tile_url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        user_agent = "HEMS-Dispatch/1.1.1 (X-Plane 12; FlyWithLua NG+)",
+        user_agent = "HEMS-Dispatch/1.1.4 (X-Plane 12; FlyWithLua NG+)",
 
         -- curl is included with current Windows versions and commonly available on
         -- macOS/Linux. Downloads run asynchronously so X-Plane is not blocked.
@@ -170,7 +174,7 @@ return {
 
         -- Public OpenStreetMap Overpass API endpoint used for hospital POIs.
         overpass_url = "https://overpass-api.de/api/interpreter",
-        user_agent = "HEMS-Dispatch/1.1.1 (X-Plane 12; FlyWithLua NG+)",
+        user_agent = "HEMS-Dispatch/1.1.4 (X-Plane 12; FlyWithLua NG+)",
 
         curl_executable = (SYSTEM == "IBM") and "curl.exe" or "curl",
         connect_timeout_seconds = 5,

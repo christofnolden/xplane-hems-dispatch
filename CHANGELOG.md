@@ -2,6 +2,21 @@
 
 All notable changes to HEMS Dispatch are documented in this file.
 
+## 1.1.4 — 2026-11-07
+
+### Added
+- Added `simheaven.edition = "standard" | "pro"` to select both the scenery network folder and a dedicated road subtype profile. `road_scenery_folder` is now an optional override.
+- Added `modules/road_profiles.lua` as the single source of truth for cache eligibility, mission road group matching, road group names/IDs, one-way flags and highway/single-lane flags.
+- Added X-World Pro mappings for one-way unclassified roads (76–77), local entrances (80–81), residential roads (82–83), additional single-lane variations (72–73), special road variants (170–181) and additional highway variants. Footways (74–75), cycleways (78–79) and rail subtypes remain excluded.
+
+### Changed
+- Standard road profile preserves the exact v1.1.3 subtype groups and flags; mission `road_groups` and RescueX units remain independent of scenery-specific numeric subtype IDs.
+- HRI-v3 cache headers now record the active road profile and mapping revision. Existing v2 caches and caches from another edition rebuild automatically; the cache filename and DSF signature check are retained.
+- `dispatch.allow_single_lane_incidents` and `dispatch.allow_highway_incidents` are now honored when those road groups are explicitly configured in a mission.
+- Added edition/profile and selected road subtype logging; validated that known official Standard/Pro scenery folder names cannot be paired with the wrong edition.
+- Kept legacy v1.1.3 folder-only configurations compatible; recognized official Pro folder names automatically select the Pro subtype profile.
+- Updated version metadata and English/German documentation. The Moving Map, RescueX placement algorithms, and custom-mission search radius are unchanged.
+
 ## 1.1.3 — 2026-11-07
 
 ### Added
