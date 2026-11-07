@@ -1,6 +1,6 @@
 # HEMS Dispatch for X-Plane 12
 
-**Version:** 1.1.2
+**Version:** 1.1.3
 
 HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations are derived from the installed **SimHeaven X-World Europe road network**, while emergency vehicles are loaded from **RescueX_Lib** and placed along the actual road geometry.
 
@@ -34,7 +34,7 @@ HEMS Dispatch generates random HEMS missions for X-Plane 12. Mission locations a
 - **X-Plane 12**
 - **FlyWithLua NG+ for X-Plane 12**  
   https://forums.x-plane.org/files/file/82888-flywithlua-ng-next-generation-plus-edition-for-x-plane-12-win-lin-mac/
-- **SimHeaven X-World Europe** with `simHeaven_X-World_Europe-8-network` enabled  
+- **SimHeaven X-World Europe** (`simHeaven_X-World_Europe-8-network`) **or X-World Pro Europe** (`simHeaven_X-WORLD-Pro_Europe-13-net3-roads`), with the respective road scenery enabled  
   https://simheaven.com/package/x-world-europe/
 - **RescueX_Lib**  
   https://www.rotorsim.de/de/rescuex/5-rescue-x/11-rescuex
@@ -65,6 +65,13 @@ FlyWithLua/
         ├── output/
         └── modules/
 ```
+
+**Select the SimHeaven road scenery:** Make sure the matching folder is installed directly under `X-Plane 12/Custom Scenery/` and enabled in `Custom Scenery/scenery_packs.ini` (`SCENERY_PACK`, not `SCENERY_PACK_DISABLED`):
+
+- **X-World Europe (standard):** `simHeaven_X-World_Europe-8-network`
+- **X-World Pro Europe:** `simHeaven_X-WORLD-Pro_Europe-13-net3-roads`
+
+In `HEMS_Dispatch/config.lua`, set `simheaven.road_scenery_folder` to the **exact name of the installed road scenery folder**. The standard X-World Europe name is the default. Specify only the folder name, not its full path. See **Configuration** below for examples.
 
 Then start X-Plane or use **FlyWithLua > Reload all Lua script files**.
 
@@ -218,6 +225,7 @@ HEMS_Dispatch/config.lua
 
 Configurable options include:
 
+- SimHeaven road scenery folder (`simheaven.road_scenery_folder`)
 - Dispatch radius and road search radius (plus independent custom map-click road search radius)
 - Mission probabilities
 - Road class weights
@@ -230,6 +238,22 @@ Configurable options include:
 - OSM tile URL, download settings and rolling GPU texture budget
 - Automatic mission preview zoom (`moving_map.mission_preview_zoom`)
 - Hospital search radii, Overpass endpoint, request timeout and persistent hospital cache behavior
+
+To choose the installed SimHeaven road network, edit `road_scenery_folder` in the existing `simheaven` section of `config.lua`. Use **one** of the following values:
+
+**X-World Europe (default):**
+
+```lua
+road_scenery_folder = "simHeaven_X-World_Europe-8-network",
+```
+
+**X-World Pro Europe:**
+
+```lua
+road_scenery_folder = "simHeaven_X-WORLD-Pro_Europe-13-net3-roads",
+```
+
+Use the actual name of the enabled folder under `Custom Scenery` (ideally copied with its original capitalization); do not enter an absolute path or a trailing slash.
 
 Configuration changes can be applied without restarting X-Plane using:
 
@@ -255,7 +279,7 @@ The text file is useful for VR workflows and is reset when the active mission en
 
 ## Notes
 
-- Automatic SimHeaven detection expects an enabled `simHeaven_X-World_Europe-8-network` entry.
+- Automatic SimHeaven detection uses the configured `simheaven.road_scenery_folder` and requires a corresponding enabled entry in `Custom Scenery/scenery_packs.ini`.
 - Road data is indexed locally and cached per DSF tile.
 - Highway road types are recognized but are not used for missions by default.
 - The forest layer is not used for mission classification.
@@ -269,7 +293,7 @@ SimHeaven X-World Europe, RescueX_Lib, FlyWithLua NG+ and OpenStreetMap are sepa
 
 # HEMS Dispatch für X-Plane 12
 
-**Version:** 1.1.2
+**Version:** 1.1.3
 
 HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte werden aus dem installierten **SimHeaven X-World Europe Straßennetz** abgeleitet. Einsatzfahrzeuge werden aus **RescueX_Lib** geladen und entlang des tatsächlichen Straßenverlaufs platziert.
 
@@ -303,7 +327,7 @@ HEMS Dispatch erzeugt zufällige HEMS-Einsätze für X-Plane 12. Die Einsatzorte
 - **X-Plane 12**
 - **FlyWithLua NG+ für X-Plane 12**  
   https://forums.x-plane.org/files/file/82888-flywithlua-ng-next-generation-plus-edition-for-x-plane-12-win-lin-mac/
-- **SimHeaven X-World Europe** mit aktiviertem `simHeaven_X-World_Europe-8-network`  
+- **SimHeaven X-World Europe** (`simHeaven_X-World_Europe-8-network`) **oder X-World Pro Europe** (`simHeaven_X-WORLD-Pro_Europe-13-net3-roads`), jeweils mit aktiviertem Straßenszenerie-Ordner  
   https://simheaven.com/package/x-world-europe/
 - **RescueX_Lib**  
   https://www.rotorsim.de/de/rescuex/5-rescue-x/11-rescuex
@@ -336,6 +360,13 @@ FlyWithLua/
         ├── output/
         └── modules/
 ```
+
+**SimHeaven-Straßenszenerie auswählen:** Der passende Ordner muss direkt unter `X-Plane 12/Custom Scenery/` installiert und in `Custom Scenery/scenery_packs.ini` aktiviert sein (`SCENERY_PACK`, nicht `SCENERY_PACK_DISABLED`):
+
+- **X-World Europe (Standard):** `simHeaven_X-World_Europe-8-network`
+- **X-World Pro Europe:** `simHeaven_X-WORLD-Pro_Europe-13-net3-roads`
+
+In `HEMS_Dispatch/config.lua` muss `simheaven.road_scenery_folder` auf den **exakten Namen des installierten Straßenszenerie-Ordners** gesetzt werden. Standardmäßig ist X-World Europe voreingestellt. Nur den Ordnernamen angeben, keinen vollständigen Pfad. Beispiele stehen unter **Konfiguration**.
 
 Anschließend X-Plane starten oder in FlyWithLua **Reload all Lua script files** ausführen.
 
@@ -489,6 +520,7 @@ HEMS_Dispatch/config.lua
 
 Konfigurierbar sind unter anderem:
 
+- SimHeaven-Straßenszenerie-Ordner (`simheaven.road_scenery_folder`)
 - Einsatzradius und Straßensuchradius (einschließlich eigenem Radius für manuelle Kartenpositionen)
 - Einsatzwahrscheinlichkeiten
 - Gewichtung der Straßenklassen
@@ -501,6 +533,22 @@ Konfigurierbar sind unter anderem:
 - OSM-Tile-URL, Download-Einstellungen und rollierendes GPU-Texturbudget
 - Zoom der automatischen Einsatzvorschau (`moving_map.mission_preview_zoom`)
 - Krankenhaus-Suchradien, Overpass-Endpunkt, Request-Timeout und persistentes Krankenhaus-Caching
+
+Für das installierte SimHeaven-Straßennetz den Wert `road_scenery_folder` im vorhandenen Abschnitt `simheaven` der `config.lua` ändern. **Nur einen** der folgenden Werte verwenden:
+
+**X-World Europe (Standard):**
+
+```lua
+road_scenery_folder = "simHeaven_X-World_Europe-8-network",
+```
+
+**X-World Pro Europe:**
+
+```lua
+road_scenery_folder = "simHeaven_X-WORLD-Pro_Europe-13-net3-roads",
+```
+
+Den tatsächlichen Namen des aktivierten Ordners unter `Custom Scenery` verwenden (am besten mit originaler Groß-/Kleinschreibung übernehmen). Keinen absoluten Pfad und keinen abschließenden Schrägstrich eintragen.
 
 Änderungen können ohne X-Plane-Neustart übernommen werden über:
 
@@ -526,7 +574,7 @@ Die Textdatei eignet sich insbesondere für VR-Workflows und wird beim Beenden d
 
 ## Hinweise
 
-- Die automatische SimHeaven-Erkennung erwartet einen aktivierten Eintrag `simHeaven_X-World_Europe-8-network`.
+- Die automatische SimHeaven-Erkennung verwendet `simheaven.road_scenery_folder` und benötigt einen entsprechenden aktivierten Eintrag in `Custom Scenery/scenery_packs.ini`.
 - Straßendaten werden lokal indiziert und pro DSF-Tile gecacht.
 - Autobahn-Subtypes werden erkannt, standardmäßig aber nicht für Einsätze verwendet.
 - Der Forest-Layer wird nicht zur Einsatzklassifizierung ausgewertet.
