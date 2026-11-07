@@ -31,6 +31,17 @@ local function validate_range(name, r)
 end
 
 function M.validate_config(cfg)
+    -- Optional for backwards compatibility with pre-1.1.3 config.lua files.
+    if cfg.simheaven ~= nil then
+        if type(cfg.simheaven) ~= "table" then
+            return false, "simheaven must be a table."
+        end
+        local folder = cfg.simheaven.road_scenery_folder
+        if type(folder) ~= "string" or folder == "" or folder:match("^%s")
+            or folder:match("%s$") or folder:find("[/\\]") or folder == "." or folder == ".." then
+            return false, "simheaven.road_scenery_folder must be one folder name (without path separators)."
+        end
+    end
     if type(cfg.dispatch) ~= "table" then return false, "dispatch is missing." end
     if type(cfg.missions) ~= "table" or #cfg.missions == 0 then return false, "missions is missing or empty." end
     if type(cfg.rescuex) ~= "table" or type(cfg.rescuex.objects) ~= "table" then return false, "rescuex.objects is missing." end

@@ -750,25 +750,30 @@ function M.cache_is_valid(cache_path, source_dsf, spacing_m)
     return true
 end
 
-function M.detect_simheaven_root(system_directory)
+function M.detect_simheaven_root(system_directory, folder_name)
+    -- Preserve support for existing pre-1.1.3 config.lua files.
+    folder_name = folder_name or "simHeaven_X-World_Europe-8-network"
     local sep = DIRECTORY_SEPARATOR or "/"
     local ini = system_directory .. "Custom Scenery" .. sep .. "scenery_packs.ini"
     local f = io.open(ini, "r")
-    if f then
-        for line in f:lines() do
-            if line:match("^SCENERY_PACK%s+") then
-                local path = line:match("^SCENERY_PACK%s+(.+)%s*$")
-                if path and path:lower():find("simheaven_x-world_europe-8-network", 1, true) then
-                    f:close()
-                    path = path:gsub("[/\\]+$", "")
-                    return system_directory .. path
-                end
-            end
-        end
-        f:close()
+    if not f then
+        return nil, "Could not open " .. ini
     end
 
-    return nil, "No active SCENERY_PACK entry for simHeaven_X-World_Europe-8-network in " .. ini
+    for line in f:lines() do
+        -- SCENERY_PACK_DISABLED is deliberately not accepted.
+        local path = line:match("^%s*SCENERY_PACK%s+(.+)$")
+        if path then
+            path = path:match("^%s*(.-)%s*$"):gsub("[/\\]+$", "")
+            local entry_folder = path:match("([^/\\]+)$")
+            if entry_folder and entry_folder:lower() == folder_name:lower() then
+                f:close()
+                return system_directory .. path
+            end
+        end
+    end
+    f:close()
+    return nil, "No active SCENERY_PACK entry for '" .. folder_name .. "' in " .. ini
 end
 
 function M.source_dsf_path(tile_lat, tile_lon)

@@ -2,6 +2,15 @@
 
 All notable changes to HEMS Dispatch are documented in this file.
 
+## 1.1.3 — 2026-11-07
+
+### Added
+- Configurable SimHeaven road scenery folder via `simheaven.road_scenery_folder` in `config.lua`, supporting both classic X-World Europe `8-network` and X-World Pro Europe `13-net3-roads`.
+
+### Changed
+- Resolve the configured road scenery against active, exact folder names in `scenery_packs.ini` at startup and after **Reload configuration**. Invalid or disabled entries produce a clear error without replacing a working configuration.
+- Retain the old `8-network` name as a fallback for pre-1.1.3 `config.lua` files. The DSF parser and HRI cache format are unchanged.
+
 ## 1.1.2 — 2026-10-31
 
 ### Added

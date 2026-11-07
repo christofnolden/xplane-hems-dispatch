@@ -1,7 +1,15 @@
--- HEMS Dispatch v1.1.2 configuration
+-- HEMS Dispatch v1.1.3 configuration
 -- This file can be reloaded from Plugins > HEMS Dispatch > Reload configuration.
 
 return {
+    simheaven = {
+        -- Enter the exact folder name of the enabled SimHeaven road scenery
+        -- in X-Plane 12/Custom Scenery (no full path or trailing slash).
+        -- X-World Europe:     simHeaven_X-World_Europe-8-network
+        -- X-World Pro Europe: simHeaven_X-WORLD-Pro_Europe-13-net3-roads
+        road_scenery_folder = "simHeaven_X-World_Europe-8-network",
+    },
+
     dispatch = {
         min_radius_km = 1.0,
         max_radius_km = 50.0,

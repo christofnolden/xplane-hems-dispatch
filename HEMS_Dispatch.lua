@@ -1,11 +1,11 @@
 -- HEMS Dispatch for X-Plane 12 / FlyWithLua NG+
--- Version 1.1.2
+-- Version 1.1.3
 --
 -- Install this file and the HEMS_Dispatch directory directly into:
 --   X-Plane 12/Resources/plugins/FlyWithLua/Scripts/
 
 HEMS = HEMS or {}
-HEMS.VERSION = "1.1.2"
+HEMS.VERSION = "1.1.3"
 HEMS.NAME = "HEMS Dispatch"
 HEMS.active_mission = nil
 HEMS.status_message = "Initializing HEMS Dispatch ..."
@@ -78,8 +78,19 @@ function HEMS.load_config()
         return false, tostring(validation_error)
     end
 
+    -- Resolve the road scenery on every config load so "Reload configuration"
+    -- can also switch between X-World Europe and X-World Pro Europe.
+    local folder_name = cfg_or_error.simheaven and cfg_or_error.simheaven.road_scenery_folder
+    local simheaven_root, detect_err = HEMS.dsf.detect_simheaven_root(SYSTEM_DIRECTORY, folder_name)
+    if not simheaven_root then
+        HEMS.log("ERROR resolving SimHeaven roads: " .. tostring(detect_err))
+        return false, tostring(detect_err)
+    end
+
+    -- Commit config and source path together only after both checks pass.
     HEMS.config = cfg_or_error
-    HEMS.log("Configuration loaded.")
+    HEMS.paths.simheaven = simheaven_root
+    HEMS.log("Configuration loaded. SimHeaven roads: " .. simheaven_root)
     return true
 end
 
@@ -234,15 +245,6 @@ local function bootstrap()
         HEMS.log(HEMS.status_message)
         return
     end
-
-    local simheaven_root, detect_err = HEMS.dsf.detect_simheaven_root(SYSTEM_DIRECTORY)
-    if not simheaven_root then
-        HEMS.status_message = "SimHeaven X-World Europe 8-network not found: " .. tostring(detect_err)
-        HEMS.log(HEMS.status_message)
-        return
-    end
-    HEMS.paths.simheaven = simheaven_root
-    HEMS.log("SimHeaven 8-network: " .. simheaven_root)
 
     -- Commands are created by FlyWithLua so they can also be bound to joystick/keyboard.
     create_command("hems_dispatch/new_mission", "HEMS Dispatch - New mission", "HEMS.command_new_mission()", "", "")
